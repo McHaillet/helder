@@ -1,6 +1,6 @@
 ## DISCLAIMER
 
-This project is forked from DeepDeWedge and still need to be updated with its own run instructions.
+This project is forked from DeepDeWedge and changed to use 3D-CTFs as input. It still needs validation and updates of run instructions.
 
 ## Updates
 
