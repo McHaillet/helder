@@ -22,8 +22,8 @@ def data_consistency_loss(x_hat, y, ctf):
     LitUnet3D._step calls this once per step, with the (x_hat, y) pair picked at random
     between the two possible cross-wise pairings - see its docstring/comments for why.
     """
-    residual_sq = (apply_fourier_mask_to_tomo(x_hat, ctf) - y).pow(2)
-    return residual_sq.mean()
+    residual = (apply_fourier_mask_to_tomo(x_hat, ctf) - y).abs()
+    return residual.mean()
 
 
 def equivariance_loss(x_double_hat, target, mask, norm="ortho"):
@@ -48,25 +48,27 @@ def equivariance_loss(x_double_hat, target, mask, norm="ortho"):
     model's input upstream of this loss, it is never applied as a forward measurement
     operator. It's fine for 'mask''s own (rotation-invariant) zero-crossings to stay unfilled:
     there's no real data there in either representation, and weighting the comparison by
-    'mask' means this loss doesn't force them to be recovered. Applied linearly to the squared
-    residual (mask * |diff_ft|^2, not (mask*diff_ft)'s squared magnitude, which would double
-    up to mask^2) - unlike data_consistency_loss's ctf^2, an emergent side effect of chain-
-    ruling ctf through MSE, this weight is explicit and chosen directly, so it's applied at
-    the exponent it's meant to carry rather than incidentally squared.
+    'mask' means this loss doesn't force them to be recovered. Applied linearly to the
+    frequency-domain residual's magnitude (mask * |diff_ft|), matching data_consistency_loss's
+    real-space L1 (mean absolute residual) - unlike the squared-error case, there is no
+    ctf^2-vs-ctf distinction to worry about here since neither loss squares its residual
+    anymore.
 
     Both 'x_double_hat' and 'target' must be constructed from detached estimates by the
     caller - a standard equivariant-imaging stop-gradient, not a limitation of rotate_vol
     (which is itself differentiable). This loss's gradient therefore only flows through the
     *second* application of the model (the one producing 'x_double_hat').
 
-    The FFT uses the same rfftn/'norm="ortho"' convention as apply_fourier_mask_to_tomo. With
-    an orthonormal transform, Parseval's theorem makes sum(|rfftn(diff)|^2) approximately half
-    of sum(|diff|^2) (rfftn keeps only about half the full spectrum, dropping the redundant
-    conjugate-symmetric half), and the rfftn grid has approximately half as many entries as
-    the real-space volume too - so '.mean()' over the (masked) frequency-domain elements lands
-    on the same scale as the real-space MSE used by data_consistency_loss, with no extra
-    scaling factor needed.
+    The FFT uses the same rfftn/'norm="ortho"' convention as apply_fourier_mask_to_tomo.
+    Unlike the squared-error case (where Parseval's theorem makes the Fourier- and real-space
+    scales match almost exactly), there is no L1 analogue of Parseval's theorem, so this
+    doesn't land on the same scale as data_consistency_loss's real-space mean absolute
+    residual: for roughly Gaussian-distributed residuals, rfftn's near-Gaussian real/imaginary
+    parts make '.abs()' Rayleigh-distributed, whose mean is a factor of about pi/(2*sqrt(2)) ~=
+    1.11 above the real-space mean absolute residual of the same underlying distribution. If
+    this loss ends up needing to match data_consistency_loss's scale, 'lambda' (in
+    fit_model.py) is the place to compensate, not this function.
     """
     diff = x_double_hat - target
     diff_ft = torch.fft.rfftn(diff, dim=(-3, -2, -1), norm=norm)
-    return (mask * diff_ft.abs().pow(2)).mean()
+    return (mask * diff_ft.abs()).mean()

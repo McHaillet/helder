@@ -60,13 +60,13 @@ def test_data_consistency_loss_ignores_zero_ctf_frequencies():
     assert torch.allclose(loss_a, loss_b, atol=1e-4)
 
 
-def test_data_consistency_loss_matches_manual_real_space_mse():
+def test_data_consistency_loss_matches_manual_real_space_mae():
     torch.manual_seed(0)
     N = 8
     ctf = torch.rand(N, N, N // 2 + 1).clamp(0, 1)
     x_hat = torch.randn(N, N, N)
     y = torch.randn(N, N, N)
-    expected = (apply_fourier_mask_to_tomo(x_hat, ctf) - y).pow(2).mean()
+    expected = (apply_fourier_mask_to_tomo(x_hat, ctf) - y).abs().mean()
     assert torch.allclose(data_consistency_loss(x_hat, y, ctf), expected)
 
 
@@ -77,14 +77,14 @@ def test_equivariance_loss_zero_when_identical():
     assert equivariance_loss(x, x, mask).item() == 0.0
 
 
-def test_equivariance_loss_matches_manual_fourier_mse():
+def test_equivariance_loss_matches_manual_fourier_mae():
     torch.manual_seed(0)
     N = 8
     mask = torch.rand(N, N, N // 2 + 1).clamp(0, 1)
     a = torch.randn(4, N, N, N)
     b = torch.randn(4, N, N, N)
     diff_ft = torch.fft.rfftn(a - b, dim=(-3, -2, -1), norm="ortho")
-    expected = (mask * diff_ft.abs().pow(2)).mean()
+    expected = (mask * diff_ft.abs()).mean()
     assert torch.allclose(equivariance_loss(a, b, mask), expected)
 
 
@@ -109,11 +109,13 @@ def test_equivariance_loss_ignores_zero_mask_frequencies():
     assert torch.allclose(loss_ab, loss_ab_perturbed, atol=1e-4)
 
 
-def test_equivariance_loss_scale_matches_real_space_mse():
+def test_equivariance_loss_scale_vs_real_space_mae():
     """
-    With an all-ones 'mask' and 'norm="ortho"', the Fourier-domain loss lands on approximately
-    the same scale as a plain real-space MSE (matching data_consistency_loss's scale) - see
-    equivariance_loss's docstring on why rfftn + '.mean()' achieves this.
+    Unlike the squared-error case (Parseval's theorem makes an all-ones-'mask' Fourier-domain
+    loss land almost exactly on real-space MSE), there is no L1 analogue of Parseval's theorem.
+    For roughly Gaussian residuals, rfftn's near-Gaussian real/imaginary parts make '.abs()'
+    Rayleigh-distributed, whose mean sits at a factor of about pi/(2*sqrt(2)) ~= 1.11 above the
+    real-space mean absolute residual - see equivariance_loss's docstring.
     """
     torch.manual_seed(0)
     N = 32
@@ -121,5 +123,6 @@ def test_equivariance_loss_scale_matches_real_space_mse():
     a = torch.randn(N, N, N)
     b = torch.randn(N, N, N)
     fourier_loss = equivariance_loss(a, b, mask)
-    real_space_mse = (a - b).pow(2).mean()
-    assert torch.allclose(fourier_loss, real_space_mse, rtol=0.05)
+    real_space_mae = (a - b).abs().mean()
+    expected_ratio = torch.pi / (2 * 2**0.5)
+    assert (fourier_loss / real_space_mae - expected_ratio).abs() < 0.05 * expected_ratio
