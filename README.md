@@ -1,6 +1,6 @@
-# DeepDeWedge
+## DISCLAIMER
 
-This repository contains an implementation of the DeepDeWedge method as described in our manuscript ["A Deep Learning Method for Simultaneous Denoising and Missing Wedge Reconstruction in Cryogenic Electron Tomography"](https://www.nature.com/articles/s41467-024-51438-y). Our implementation comes as a Python package with an accompanying command line interface.
+This project is forked from DeepDeWedge and still need to be updated with its own run instructions.
 
 ## Updates
 
@@ -70,25 +70,5 @@ If you have a question that is not answered here, please do not hesitate to [con
 - **Q: How many sub-tomograms should I use for model fitting?**\
   A: So far, we have seen good results when fitting the default U-Net on at least 150 sub-tomograms of size 96x96x96 voxels. The smaller the sub-tomograms, the more sub-tomograms you should use, but we have not yet found a clear rule of thumb. You can increase/decrease the number of sub-tomograms by decreasing/increasing the three values in the `subtomo_extraction_strides` argument used in `ddw prepare-data`.
    
-
-## Contact
-
-If you have any questions or problems, or if you found a bug in the code, please do not hesitate to [contact us](mailto:simonw.wiedemann@tum.de) or to open an issue on GitHub.
-
-## Citation
-
-```
-@article{wiedemann2024deep,
-  title={A deep learning method for simultaneous denoising and missing wedge reconstruction in cryogenic electron tomography},
-  author={Wiedemann, Simon and Heckel, Reinhard},
-  journal={Nature Communications},
-  volume={15},
-  number={1},
-  pages={8255},
-  year={2024},
-  publisher={Nature Publishing Group UK London}
-}
-```
-
 ## License
 All files are provided under the terms of the BSD 2-Clause license.
