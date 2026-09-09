@@ -6,7 +6,7 @@ import yaml
 from torch import nn
 
 from .fourier import apply_fourier_mask_to_tomo
-from .losses import data_consistency_loss, equivariance_loss
+from .losses import data_consistency_loss
 from .normalization import get_avg_model_input_mean_and_std_from_dataloader
 from .rotation import rotate_vol, sample_grid_rotation
 
@@ -67,25 +67,15 @@ class LitUnet3D(pl.LightningModule):
         ctf = batch["ctf"]
 
         # alternate which estimate is rotated + re-degraded to build the equivariance term's
-        # model input ("x_hat2") vs. which (the *other*, independent-noise) estimate serves as
-        # its target ("x_hat1"). The same choice also picks which of the two cross-wise
-        # data-consistency pairings dc_loss evaluates this step (rather than always summing
-        # both): only the "source" branch needs gradients for that, so the "target" branch -
-        # only ever used detached, both here and for the equivariance loss below - is computed
-        # under torch.no_grad() to skip unneeded gradient bookkeeping and speed things up
-        # slightly.
+        # model input ("x_hat2"). The same choice also picks which of the two cross-wise
+        # data-consistency pairings this step evaluates (rather than always summing both):
+        # both dc_loss and eq_loss compare against the same cross-wise raw measurement
+        # 'y_cross' (see data_consistency_loss's docstring for why eq_loss is also just a
+        # data-consistency comparison, on a different estimate of the same target).
         use_branch0_as_source = (
             (batch_idx % 2 == 0) if deterministic else (random.random() < 0.5)
         )
-        if use_branch0_as_source:
-            x_hat_source = self(subtomo0)
-            with torch.no_grad():
-                x_hat_target = self(subtomo1)
-        else:
-            x_hat_source = self(subtomo1)
-            with torch.no_grad():
-                x_hat_target = self(subtomo0)
-
+        x_hat_source = self(subtomo0 if use_branch0_as_source else subtomo1)
         y_cross = subtomo1 if use_branch0_as_source else subtomo0
         dc_loss = data_consistency_loss(x_hat_source, y_cross, ctf)
 
@@ -93,7 +83,7 @@ class LitUnet3D(pl.LightningModule):
         # are guaranteed to exactly cancel (see _sample_rotations)
         rot_mats = self._sample_rotations(batch["index"], deterministic)
 
-        # rotate_vol/_rotate_batch is differentiable, but both estimates are detached here
+        # rotate_vol/_rotate_batch is differentiable, but x_hat_source is detached here
         # anyway by design (standard equivariant-imaging stop-gradient): the gradient of
         # eq_loss should only flow through the second application of self() below
         x_hat_source_rot = self._rotate_batch(x_hat_source.detach(), rot_mats)
@@ -101,7 +91,7 @@ class LitUnet3D(pl.LightningModule):
         z = apply_fourier_mask_to_tomo(x_hat_source_rot, ctf)
         x_double_hat = self(z)
         x_double_hat_unrot = self._rotate_batch(x_double_hat, rot_mats, inverse=True)
-        eq_loss = equivariance_loss(x_double_hat_unrot, x_hat_target.detach(), ctf)
+        eq_loss = data_consistency_loss(x_double_hat_unrot, y_cross, ctf)
 
         loss = dc_loss + self.lambda_ * eq_loss
         return loss, dc_loss, eq_loss

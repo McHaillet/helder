@@ -66,7 +66,8 @@ def get_wedge_preserving_flips():
 
     Exact and interpolation-free (via rotate_vol) like get_grid_rotations, but for the
     opposite reason they're useful: since they don't change the wedge orientation, they're
-    useless for equivariance_loss, but are exactly what a "mirror" data augmentation needs -
+    useless for LitUnet3D._step's equivariance term, but are exactly what a "mirror" data
+    augmentation needs -
     they still displace any fixed, position-anchored network artifact (e.g. conv boundary or
     upsampling-checkerboard bias) without invalidating the shared 'ctf' tensor or pushing the
     model to a wedge orientation it never saw in training.
