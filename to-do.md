@@ -1,3 +1,0 @@
-- get rid of tiling pattern
-  - use a high-pass filter on refined boxes?
-- test on 96 cubed boxes
