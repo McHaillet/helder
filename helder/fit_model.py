@@ -248,7 +248,7 @@ def fit_model(
     strategy = pl.strategies.DDPStrategy(
         process_group_backend=distributed_backend, 
         find_unused_parameters=False,  # setting this to true gave a warning that it might slow things down
-    ) if len(devices) > 1 else None
+    ) if len(devices) > 1 else "auto"
     trainer = pl.Trainer(
         max_epochs=num_epochs,
         accelerator="gpu",
@@ -262,7 +262,6 @@ def fit_model(
         callbacks=callbacks,
         detect_anomaly=True,
         gradient_clip_val=gradient_clip_val,
-        resume_from_checkpoint=resume_from_checkpoint,  # for pytorch-lightning < 2.0
     )
 
     # setup dataloaders
@@ -288,7 +287,7 @@ def fit_model(
     if val_data_exists and resume_from_checkpoint is None:
         trainer.validate(lit_unet, val_dataloader)
     trainer.fit(
-        #ckpt_path=resume_from_checkpoint,  # for pytorch-lightning >= 2.0
+        ckpt_path=resume_from_checkpoint,
         model=lit_unet,
         train_dataloaders=fitting_dataloader,
         val_dataloaders=val_dataloader,
