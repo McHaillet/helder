@@ -3,11 +3,6 @@
 This project is forked from DeepDeWedge and changed to use 3D-CTFs as input. It still needs validation and updates of run instructions.
 
 ## Installation
-Clone this repository, e.g. via
-```
-git clone https://github.com/McHaillet/helder
-cd helder
-```
 We recommend installing into a fresh `Python >=3.10` environment, e.g. via [Anaconda](https://www.anaconda.com/download):
 ```
 conda create -n helder_env python=3.10
@@ -17,9 +12,9 @@ Next, install a version of `PyTorch` that is compatible with your `CUDA` version
 ```
 conda install pytorch pytorch-cuda=11.8 -c pytorch -c nvidia
 ```
-Finally, install the Helder package, which pulls in its remaining dependencies via `pyproject.toml`:
+Finally, install the Helder package directly from GitHub, which pulls in its remaining dependencies via `pyproject.toml`:
 ```
-pip install .
+pip install git+https://github.com/McHaillet/helder
 ```
 Upon successful installation, running
 ```
