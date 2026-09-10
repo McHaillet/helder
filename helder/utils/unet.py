@@ -13,7 +13,7 @@ from .rotation import rotate_vol, sample_grid_rotation
 
 class LitUnet3D(pl.LightningModule):
     """
-    PyTrochLightning 'wrapper' of a 3D U-Net. This class implements steps for model fitting, validation and logging. This class is the heart of the 'ddw fit-model' command.
+    PyTrochLightning 'wrapper' of a 3D U-Net. This class implements steps for model fitting, validation and logging. This class is the heart of the 'helder fit-model' command.
     """
 
     def __init__(
@@ -39,7 +39,7 @@ class LitUnet3D(pl.LightningModule):
 
     def _sample_rotations(self, indices, deterministic):
         """
-        Samples one grid rotation per volume (see ddw.utils.rotation.get_grid_rotations).
+        Samples one grid rotation per volume (see helder.utils.rotation.get_grid_rotations).
         Callers that need to later undo the same rotation (via _rotate_batch's 'inverse')
         must reuse the returned list rather than re-sampling by 'index': when 'deterministic'
         is False, sample_grid_rotation draws from the shared global 'random' state, so two

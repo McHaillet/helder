@@ -12,7 +12,7 @@ def pprint_dict(d):
 
 def print_help_for_function_arguments(func, arg_names=None, print_only_required=False):
     """
-    Prints the help text of arguments of the DeepDeWedge commmands.
+    Prints the help text of arguments of the Helder commmands.
     """
     sig = inspect.signature(func)
     if arg_names is None:

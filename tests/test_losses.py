@@ -1,10 +1,10 @@
 """
-Tests for ddw.utils.losses: data_consistency_loss. Pure CPU/torch - no GPU needed.
+Tests for helder.utils.losses: data_consistency_loss. Pure CPU/torch - no GPU needed.
 """
 import torch
 
-from ddw.utils.fourier import apply_fourier_mask_to_tomo
-from ddw.utils.losses import data_consistency_loss
+from helder.utils.fourier import apply_fourier_mask_to_tomo
+from helder.utils.losses import data_consistency_loss
 
 
 def test_data_consistency_loss_zero_for_perfect_cross_reconstruction():

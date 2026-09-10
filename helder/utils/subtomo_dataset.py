@@ -29,7 +29,7 @@ class SubtomoDataset(Dataset):
     'subtomo0'/'subtomo1' are two independent-noise reconstructions of the same tomogram
     region (e.g. from even/odd tilt series frames), at 'subtomo_size' - the model is run on
     them directly, with no cropping: LitUnet3D rotates its own estimate using one of the 20
-    grid-aligned rotations from ddw.utils.rotation.get_grid_rotations, which is exact (no
+    grid-aligned rotations from helder.utils.rotation.get_grid_rotations, which is exact (no
     interpolation) and preserves shape, so no extra border is needed to rotate into. Both
     share the same physical 'ctf' (values in [0, 1]), since it depends only on the
     acquisition geometry, not on which half of the frames was used. The DC bin ([0,0,0]) is

@@ -1,12 +1,12 @@
 """
-Tests for LitUnet3D's rotation helpers (ddw.utils.unet): _sample_rotations/_rotate_batch.
+Tests for LitUnet3D's rotation helpers (helder.utils.unet): _sample_rotations/_rotate_batch.
 Pure CPU/torch - no GPU needed (only fit_model's Trainer requires one).
 """
 import random
 
 import torch
 
-from ddw.utils.unet import LitUnet3D
+from helder.utils.unet import LitUnet3D
 
 
 def _make_lit_unet(**kwargs):

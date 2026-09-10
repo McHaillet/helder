@@ -1,5 +1,5 @@
 """
-End-to-end tests for 'ddw fit-model' on a per-subtomo 3D-CTF subtomo_dir (the only
+End-to-end tests for 'helder fit-model' on a per-subtomo 3D-CTF subtomo_dir (the only
 supported mode - the legacy mw_angle/binary-wedge path has been removed entirely). These
 call fit_model() directly (not through the CLI). Most of these actually run the U-Net,
 which requires a GPU: fit_model always builds its pytorch_lightning Trainer with
@@ -10,7 +10,7 @@ import shutil
 import pytest
 import torch
 
-from ddw.fit_model import fit_model
+from helder.fit_model import fit_model
 
 requires_gpu = pytest.mark.skipif(
     not torch.cuda.is_available(),
@@ -65,7 +65,7 @@ def test_fit_model_raises_on_indivisible_native_size(make_subtomo_dir, tmp_path)
 def test_fit_model_raises_when_native_size_not_equal_to_subtomo_size(make_subtomo_dir, tmp_path):
     # raises before the Trainer/GPU is ever touched, so no GPU needed here. The model is run
     # directly on the on-disk subtomo0/subtomo1 every step, rotating its own estimate in
-    # place with an exact, shape-preserving grid rotation (see ddw.utils.rotation), so the
+    # place with an exact, shape-preserving grid rotation (see helder.utils.rotation), so the
     # on-disk size must equal subtomo_size - no cropping happens anymore.
     root = make_subtomo_dir(native_size=32, crop_size=24, n_fitting=6, n_val=2)
     with pytest.raises(ValueError, match="equal"):

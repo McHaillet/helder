@@ -1,7 +1,7 @@
 """
 End-to-end refinement of a single tilt series: reconstruct even/odd
 subtomograms (+ shared 3D-CTF) on a regular grid of positions, refine each
-pair with a fitted DeepDeWedge U-Net, and reassemble the results into one
+pair with a fitted Helder U-Net, and reassemble the results into one
 refined tomogram - all in memory, without ever writing individual subtomo
 files to disk.
 
@@ -27,13 +27,13 @@ just running f once on each of y0/y1 and averaging.
 
 Refined subtomograms are placed back into the output tomogram with
 nearest-center (Voronoi) assignment by default - see
-ddw.utils.subtomos.reassemble_subtomos_nearest_center - not a blend of all
+helder.utils.subtomos.reassemble_subtomos_nearest_center - not a blend of all
 overlapping subtomos: subtomos are less reliable towards their own
 edges/corners (e.g. correct_attenuation's sinc^2 correction grows with
 distance from the reconstruction center), and blending several such
 edge-degraded samples together compounds that degradation rather than
 cancelling it. `--reassembly-method hann-ramp` opts into blending instead
-(ddw.utils.subtomos.reassemble_subtomos + get_hann_ramp_weights), which
+(helder.utils.subtomos.reassemble_subtomos + get_hann_ramp_weights), which
 can look smoother across seams at the cost of re-mixing in that edge
 degradation. Since each subtomogram is reconstructed at a sub-voxel-precise
 physical position (independent per-position backprojection, not cropped from
@@ -73,10 +73,10 @@ import tqdm
 from warpylib import TiltSeries
 from warpylib.ops import preprocess_tilt_data
 
-from ddw.fit_model import LitUnet3D
-from ddw.utils.fourier import apply_fourier_mask_to_tomo
-from ddw.utils.mrctools import save_mrc_data
-from ddw.utils.subtomos import reassemble_subtomos, reassemble_subtomos_nearest_center
+from helder.fit_model import LitUnet3D
+from helder.utils.fourier import apply_fourier_mask_to_tomo
+from helder.utils.mrctools import save_mrc_data
+from helder.utils.subtomos import reassemble_subtomos, reassemble_subtomos_nearest_center
 
 
 def make_grid_axis_centers(volume_dims: torch.Tensor, box_physical: float, overlap: float) -> list:
@@ -120,10 +120,10 @@ def main() -> None:
     parser.add_argument("xml_file", type=Path, help="Path to a single tilt series .xml file")
     parser.add_argument("--pixel-size", type=float, required=True, help="Reconstruction pixel size in Angstrom")
     parser.add_argument("--box-size", type=int, required=True, help="Subtomogram + CTF box size in pixels (must be even). Should match the subtomo_size used to fit --model-checkpoint")
-    parser.add_argument("--model-checkpoint", type=Path, required=True, help="Path to a DeepDeWedge model checkpoint (.ckpt)")
+    parser.add_argument("--model-checkpoint", type=Path, required=True, help="Path to a Helder model checkpoint (.ckpt)")
     parser.add_argument("--output-file", type=Path, required=True, help="Path to save the refined tomogram (.mrc)")
     parser.add_argument("--overlap", type=float, default=0.5, help="Minimum fractional overlap between neighboring grid positions, relative to --box-size (default: 0.5)")
-    parser.add_argument("--reassembly-method", type=str, choices=["nearest-center", "hann-ramp"], default="nearest-center", help="How to combine overlapping refined subtomograms into the output tomogram. 'nearest-center' (default) assigns each voxel to its closest-center subtomogram - no blending, so it doesn't compound the edge/corner reconstruction degradation described above. 'hann-ramp' blends overlaps with Hann-shaped (raised-cosine) edge weights (ddw.utils.subtomos.get_hann_ramp_weights), which can look smoother across seams but re-mixes in that edge degradation")
+    parser.add_argument("--reassembly-method", type=str, choices=["nearest-center", "hann-ramp"], default="nearest-center", help="How to combine overlapping refined subtomograms into the output tomogram. 'nearest-center' (default) assigns each voxel to its closest-center subtomogram - no blending, so it doesn't compound the edge/corner reconstruction degradation described above. 'hann-ramp' blends overlaps with Hann-shaped (raised-cosine) edge weights (helder.utils.subtomos.get_hann_ramp_weights), which can look smoother across seams but re-mixes in that edge degradation")
     parser.add_argument("--oversampling", type=float, default=3.0, help="Oversampling passed to reconstruct_subvolumes_single/reconstruct_subvolume_ctfs_single. Backprojects from a --box-size * --oversampling patch and crops back to --box-size, which gentles correct_attenuation's sinc^2 correction (it grows sharply towards each box's own corners) - too low a value leaves every subtomo's corners/edges visibly boosted (default: 3.0, vs. reconstruct_subvolumes_single's own default of 2.0)")
     parser.add_argument("--device", type=str, default="cpu", help="torch device to reconstruct and run the model on, e.g. 'cpu', 'cuda', 'cuda:0' (default: cpu)")
     parser.add_argument("--batch-size", type=int, default=None, help="Max grid positions reconstructed and refined in a single batch; splits large tomograms into chunks to bound memory use (default: no chunking)")

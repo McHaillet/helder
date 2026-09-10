@@ -1,13 +1,13 @@
 """
 Tests for SubtomoDataset: it now just loads raw (subtomo0, subtomo1, ctf) triples - no
 rotation, no masking, no legacy mw_angle path (all of that moved into LitUnet3D._step, see
-ddw.utils.unet). 'ctf' is loaded as-is, in rfftn convention (never expanded to a full,
+helder.utils.unet). 'ctf' is loaded as-is, in rfftn convention (never expanded to a full,
 fftshifted array - see apply_fourier_mask_to_tomo). Pure CPU/torch - no GPU needed.
 """
 import pytest
 import torch
 
-from ddw.utils.subtomo_dataset import SubtomoDataset
+from helder.utils.subtomo_dataset import SubtomoDataset
 
 
 def test_missing_subtomo0_raises(tmp_path):

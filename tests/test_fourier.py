@@ -1,10 +1,10 @@
 """
-Tests for ddw.utils.fourier: apply_fourier_mask_to_tomo (rfftn-based CTF/mask application)
+Tests for helder.utils.fourier: apply_fourier_mask_to_tomo (rfftn-based CTF/mask application)
 and fft_3d (the fftshifted full transform, used only for visualization).
 """
 import torch
 
-from ddw.utils.fourier import apply_fourier_mask_to_tomo, fft_3d
+from helder.utils.fourier import apply_fourier_mask_to_tomo, fft_3d
 
 
 def test_apply_fourier_mask_matches_direct_rfftn_masking():

@@ -4,7 +4,7 @@ from torch.utils.data import BatchSampler
 class MultiEpochsDataLoader(torch.utils.data.DataLoader):
     """
     The MultiEpochsDataLoader is a PyTorch dataloader that re-uses worker processes rather than re-initializing the every epoch (see https://github.com/pytorch/pytorch/issues/15849#issuecomment-518126031).
-    For DeepDeWedge, we found that the MultiEpochsDataLoader significantly reduces the fitting time compared to the standard dataloder when epochs are short, i.e., consist of few batches.
+    For Helder, we found that the MultiEpochsDataLoader significantly reduces the fitting time compared to the standard dataloder when epochs are short, i.e., consist of few batches.
     This is likely due to the computationally expensive spatial rotations that are applied whenever a new sub-tomogram pair is sampled from the training set.
     """
 

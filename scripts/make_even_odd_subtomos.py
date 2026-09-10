@@ -10,7 +10,7 @@ grid position, an even and an odd subtomogram are reconstructed at
 (identical for even and odd, since CTF does not depend on which half of the
 frames was used), also reconstructed at `--box-size` (the fit-model
 `subtomo_size`) - fit-model runs its own estimate through one of 20 exact,
-shape-preserving grid rotations (see ddw.utils.rotation), so subtomo0/
+shape-preserving grid rotations (see helder.utils.rotation), so subtomo0/
 subtomo1/ctf all share the same box size; no larger native box is needed.
 
 All subvolumes from all tilt series are pooled and randomly split into a

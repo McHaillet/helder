@@ -1,12 +1,12 @@
 """
-Tests for ddw.utils.rotation: the 20 grid-aligned rotations (get_grid_rotations,
+Tests for helder.utils.rotation: the 20 grid-aligned rotations (get_grid_rotations,
 sample_grid_rotation) and their exact, interpolation-free application (rotate_vol).
 """
 import itertools
 
 import torch
 
-from ddw.utils.rotation import (
+from helder.utils.rotation import (
     GRID_ROTATIONS,
     WEDGE_PRESERVING_FLIPS,
     get_grid_rotations,

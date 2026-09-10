@@ -51,7 +51,7 @@ def prepare_data(
     mask_files: Annotated[
         List[Path],
         typer.Option(
-            help="List of paths to binary masks (mrc files) that outline the region of interest in the tomograms to guide subtomogram extraction. The DeepDeWedge reconstruction of areas outside the mask may be less accurate. If no mask_files are provided, the entire tomogram is used for subtomogram extraction."
+            help="List of paths to binary masks (mrc files) that outline the region of interest in the tomograms to guide subtomogram extraction. The Helder reconstruction of areas outside the mask may be less accurate. If no mask_files are provided, the entire tomogram is used for subtomogram extraction."
         ),
     ] = [],
     min_nonzero_mask_fraction_in_subtomo: Annotated[
@@ -75,7 +75,7 @@ def prepare_data(
     standardize_full_tomos: Annotated[
         bool,
         typer.Option(
-            help="If 'True', the tomo0 and tomo1 tomograms will be standardized (mean=0, std=1) before extracting the subtomograms. This is useful for tomograms with low voxel itensities, and DDW can fail when processing such tomograms wihtout standardization."
+            help="If 'True', the tomo0 and tomo1 tomograms will be standardized (mean=0, std=1) before extracting the subtomograms. This is useful for tomograms with low voxel itensities, and Helder can fail when processing such tomograms wihtout standardization."
         ),
     ] = False,
     subtomo_dir: Annotated[
@@ -149,7 +149,7 @@ def prepare_data(
                 print(f"\
                     WARNING: Standard deviation of '{tomo0_file}' is low ({std}), which may lead to issues during model fitting!\
                     \nConsider setting 'standardize_full_tomos=True'.\
-                    \nIf you do so, you must also set 'standardize_full_tomos=True' for 'ddw refine-tomogram'.\
+                    \nIf you do so, you must also set 'standardize_full_tomos=True' for 'helder refine-tomogram'.\
             ")
         subtomos0, start_coords = extract_subtomos(
             tomo=tomo0,

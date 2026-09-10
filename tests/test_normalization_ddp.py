@@ -14,7 +14,7 @@ import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 
-from ddw.utils.normalization import get_avg_model_input_mean_and_std_from_dataloader
+from helder.utils.normalization import get_avg_model_input_mean_and_std_from_dataloader
 
 
 def _worker(rank, world_size, port, results):

@@ -58,7 +58,7 @@ def refine_tomogram(
     standardize_full_tomos: Annotated[
         bool,
         typer.Option(
-            help="Set to 'True' if and only if 'standardize_full_tomos' was 'True' for 'ddw fit-model'."
+            help="Set to 'True' if and only if 'standardize_full_tomos' was 'True' for 'helder fit-model'."
         ),
     ] = False,
     recompute_normalization: Annotated[
@@ -135,7 +135,7 @@ def refine_tomogram(
 
     if hasattr(gpu, "__len__"):
         if len(gpu) > 1:
-            print(f"WARNING: Currently, only a single GPU is supported in 'ddw refine-tomogram'. You passed gpu={gpu}. Continuing with gpu={gpu[0]}.")
+            print(f"WARNING: Currently, only a single GPU is supported in 'helder refine-tomogram'. You passed gpu={gpu}. Continuing with gpu={gpu[0]}.")
         
     device = "cpu" if gpu is None else f"cuda:{gpu[0]}"
     lightning_model = (

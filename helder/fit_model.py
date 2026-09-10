@@ -186,7 +186,7 @@ def fit_model(
 
     # the model is run directly on the on-disk subtomo0/subtomo1 every step (see
     # LitUnet3D._step), rotating its own estimate in place with one of the 20 grid-aligned
-    # rotations from ddw.utils.rotation.get_grid_rotations - exact (no interpolation) and
+    # rotations from helder.utils.rotation.get_grid_rotations - exact (no interpolation) and
     # shape-preserving, so the on-disk size must simply equal subtomo_size
     native_size = fitting_dataset[0]["subtomo0"].shape[-1]
     if native_size % factor != 0:
