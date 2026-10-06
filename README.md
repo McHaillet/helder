@@ -5,12 +5,13 @@ This project is forked from DeepDeWedge and changed to use 3D-CTFs as input. It 
 ## Installation
 We recommend installing into a fresh `Python >=3.10` environment, e.g. via [Anaconda](https://www.anaconda.com/download):
 ```
-conda create -n helder_env python=3.10
-conda activate helder_env
+conda create -n helder -c conda-forge python=3.12 cuda-toolkit=12.9 -y
+conda activate helder
 ```
-Next, install a version of `PyTorch` that is compatible with your `CUDA` version (a list of `PyTorch`/`CUDA` combinations is available [here](https://pytorch.org/get-started/previous-versions/)), e.g.
+Next, install torch-projectors which requires a specific version of pytorch:
 ```
-conda install pytorch pytorch-cuda=11.8 -c pytorch -c nvidia
+python -m pip install torch==2.8.0
+python -m pip install torch-projectors --index-url https://warpem.github.io/torch-projectors/cu129/simple/
 ```
 Finally, install the Helder package directly from GitHub, which pulls in its remaining dependencies via `pyproject.toml`:
 ```
