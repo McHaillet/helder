@@ -23,5 +23,15 @@ helder --help
 ```
 should display a help message for the Helder command line interface.
 
+## How-to
+
+The repo is not fully cleaned up yet. To run the program:
+
+1. run `scripts/make_even_odd_subtomos.py`
+2. run `helder fit-model`
+3. run `scripts/refine_tomogram_single.py` on all the tomograms you want to refine
+
+Recommended is to fit a model with 64 channels and a subtomogram size of 96.
+
 ## License
 All files are provided under the terms of the BSD 2-Clause license.
