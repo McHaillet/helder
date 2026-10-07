@@ -68,3 +68,49 @@ def test_step_combines_dc_and_eq_losses_weighted_by_lambda():
         assert torch.isfinite(term)
     # dc_loss's gradient must flow through x_hat_source
     assert dc_loss.requires_grad
+
+
+def test_forward_is_equivariant_to_input_shift_and_scale():
+    """
+    Each input is normalized with its own median/percentile scale and the output is mapped
+    back with the same values (Unet3D.get_loc_and_scale), so shifting and scaling the input
+    must shift and scale the output identically - despite the biases and instance norms
+    inside the network.
+    """
+    torch.manual_seed(0)
+    lit_unet = _make_lit_unet().eval()
+    vol = torch.randn(2, 8, 8, 8)
+    with torch.no_grad():
+        out = lit_unet(vol)
+        out_transformed = lit_unet(1e-4 * vol + 3.0)
+    assert torch.allclose(out_transformed, 1e-4 * out + 3.0, atol=1e-6)
+
+
+def test_loc_and_scale_ignore_outlier_voxels():
+    torch.manual_seed(0)
+    lit_unet = _make_lit_unet()
+    vol = torch.randn(1, 1, 16, 16, 16)
+    loc, scale = lit_unet.unet.get_loc_and_scale(vol)
+    assert abs(loc.item()) < 0.1 and abs(scale.item() - 1.0) < 0.1
+    vol_outliers = vol.clone()
+    vol_outliers.view(-1)[:20] = 1000.0  # a few extreme voxels, e.g. a gold fiducial
+    loc_outliers, scale_outliers = lit_unet.unet.get_loc_and_scale(vol_outliers)
+    assert torch.allclose(loc_outliers, loc, atol=0.05)
+    assert torch.allclose(scale_outliers, scale, atol=0.05)
+
+
+def test_convs_followed_by_instance_norm_have_no_bias_and_all_others_do():
+    lit_unet = _make_lit_unet()
+    for block in [*lit_unet.unet.down_blocks, *lit_unet.unet.up_blocks]:
+        layers = list(block.layers)
+        for layer, next_layer in zip(layers, layers[1:]):
+            if isinstance(layer, torch.nn.Conv3d):
+                assert isinstance(next_layer, torch.nn.InstanceNorm3d)
+                assert layer.bias is None and next_layer.bias is not None
+    other_convs = [
+        m
+        for name, m in lit_unet.unet.named_modules()
+        if isinstance(m, torch.nn.Conv3d) and "_blocks" not in name
+    ]
+    assert len(other_convs) > 0
+    assert all(conv.bias is not None for conv in other_convs)
