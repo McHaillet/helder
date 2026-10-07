@@ -114,3 +114,22 @@ def test_convs_followed_by_instance_norm_have_no_bias_and_all_others_do():
     ]
     assert len(other_convs) > 0
     assert all(conv.bias is not None for conv in other_convs)
+
+
+def test_step_is_reproducible_when_deterministic():
+    """
+    The synthetic noise added to the equivariance term's model input must not make the
+    validation loss vary between calls.
+    """
+    torch.manual_seed(0)
+    lit_unet = _make_lit_unet().eval()
+    N = 8
+    batch = {
+        "subtomo0": torch.randn(2, N, N, N),
+        "subtomo1": torch.randn(2, N, N, N),
+        "ctf": torch.rand(2, N, N, N // 2 + 1).clamp(0, 1),
+        "index": [0, 1],
+    }
+    with torch.no_grad():
+        losses = [lit_unet._step(batch, batch_idx=0, deterministic=True)[0] for _ in range(2)]
+    assert torch.equal(losses[0], losses[1])

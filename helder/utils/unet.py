@@ -4,7 +4,7 @@ import pytorch_lightning as pl
 import torch
 from torch import nn
 
-from .fourier import apply_fourier_mask_to_tomo
+from .fourier import apply_fourier_mask_to_tomo, synthesize_noise
 from .losses import data_consistency_loss
 from .rotation import rotate_vol, sample_grid_rotation
 
@@ -86,7 +86,17 @@ class LitUnet3D(pl.LightningModule):
         # eq_loss should only flow through the second application of self() below
         x_hat_source_rot = self._rotate_batch(x_hat_source.detach(), rot_mats)
 
-        z = apply_fourier_mask_to_tomo(x_hat_source_rot, ctf)
+        # the re-masked estimate is noise-free, unlike the raw observations the model sees in
+        # its first application, so add synthetic noise to make it a new noisy observation.
+        # The noise is added after rotating and re-masking, and is not rotated itself: it
+        # belongs to the acquisition geometry, like 'ctf'
+        generator = None
+        if deterministic:
+            generator = torch.Generator(device=subtomo0.device).manual_seed(
+                int(batch["index"][0])
+            )
+        noise = synthesize_noise(subtomo0, subtomo1, generator=generator)
+        z = apply_fourier_mask_to_tomo(x_hat_source_rot, ctf) + noise
         x_double_hat = self(z)
         x_double_hat_unrot = self._rotate_batch(x_double_hat, rot_mats, inverse=True)
         eq_loss = data_consistency_loss(x_double_hat_unrot, y_cross, ctf)
