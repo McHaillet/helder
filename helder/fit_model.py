@@ -201,7 +201,9 @@ def fit_model(
             f"subtomo_size ({subtomo_size})."
         )
     # setup callbacks
-    callbacks = []
+    # lightning defaults to the rich progress bar if rich is installed, which does
+    # not render when output is redirected to a file
+    callbacks = [pl.callbacks.TQDMProgressBar()]
     # lr_callback = pl.callbacks.LearningRateMonitor(logging_interval="epoch")
     # callbacks.append(lr_callback)
     # this saves the model everey 50 epochs
