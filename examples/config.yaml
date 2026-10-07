@@ -21,7 +21,7 @@ prepare_data:
 
 fit_model:
     unet_params_dict:
-      chans: 64
+      chans: 32
       num_downsample_layers: 3
       drop_prob: 0.0
     adam_params_dict: 
