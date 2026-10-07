@@ -2,12 +2,10 @@ import random
 
 import pytorch_lightning as pl
 import torch
-import yaml
 from torch import nn
 
 from .fourier import apply_fourier_mask_to_tomo
 from .losses import data_consistency_loss
-from .normalization import get_avg_model_input_mean_and_std_from_dataloader
 from .rotation import rotate_vol, sample_grid_rotation
 
 
@@ -116,10 +114,6 @@ class LitUnet3D(pl.LightningModule):
     # def on_before_zero_grad(self, optimizer) -> None:
     #     self.ema.update()
 
-    def on_train_start(self) -> None:
-        if self.current_epoch == 0:
-            self.update_normalization()
-
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), **self.adam_params)
         # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.1)
@@ -128,41 +122,6 @@ class LitUnet3D(pl.LightningModule):
     # def lr_scheduler_step(self, scheduler, optimizer_idx, metric) -> None:
     #     if scheduler is not None:
     #         scheduler.step()
-
-    def update_normalization(self):
-        """
-        Updates the average model input mean and standard deviation used to normalize the sub-tomograms.
-        """
-        loc, scale = get_avg_model_input_mean_and_std_from_dataloader(
-            dataloader=self.trainer.train_dataloader, verbose=True
-        )
-
-        # update normalization in unet
-        self.unet.normalization_loc = loc
-        self.unet.normalization_scale = scale
-        # update normalization in hparams
-        self.unet_params["normalization_loc"] = loc
-        self.unet_params["normalization_scale"] = scale
-        self.update_hparam("unet_params", self.unet_params)
-        self.log("normalization/loc", loc)
-        self.log("normalization/scale", scale)
-
-    def update_hparam(self, hparam, value):
-        """
-        Update a hyperparameter in the hparams.yaml file.
-        """
-        if not self.trainer.is_global_zero:
-            # under DDP this hook runs on every rank, but the logger only writes
-            # hparams.yaml on rank 0 (its log_hyperparams is @rank_zero_only), so on
-            # other ranks the file is empty/not yet written - skip them here
-            return
-        logger = self.trainer.logger
-        logdir = f"{logger.save_dir}/{logger.name}/version_{logger.version}"
-        hparams_file = f"{logdir}/hparams.yaml"
-        hparams = yaml.safe_load(open(hparams_file, "r"))
-        hparams[hparam] = value
-        with open(hparams_file, "w") as f:
-            yaml.dump(hparams, f)
 
 
 class Unet3D(torch.nn.Module):
@@ -178,8 +137,6 @@ class Unet3D(torch.nn.Module):
         num_downsample_layers: int = 3,
         drop_prob: float = 0.0,
         residual: bool = True,
-        normalization_loc: float = 0.0,
-        normalization_scale: float = 1.0,
     ):
         super().__init__()
 
@@ -189,29 +146,7 @@ class Unet3D(torch.nn.Module):
         self.num_downsample_layers = num_downsample_layers
         self.drop_prob = drop_prob
         self.residual = residual
-        self.normalization_loc = normalization_loc
-        self.normalization_scale = normalization_scale
         self.__init_layers__()
-
-    @property
-    def normalization_loc(self):
-        return self._normalization_loc
-
-    @normalization_loc.setter
-    def normalization_loc(self, normalization_loc):
-        self._normalization_loc = nn.parameter.Parameter(
-            torch.tensor(normalization_loc), requires_grad=False
-        )
-
-    @property
-    def normalization_scale(self):
-        return self._normalization_scale
-
-    @normalization_scale.setter
-    def normalization_scale(self, normalization_scale):
-        self._normalization_scale = nn.parameter.Parameter(
-            torch.tensor(normalization_scale), requires_grad=False
-        )
 
     def __init_layers__(self):
         self.down_blocks = nn.ModuleList(
@@ -226,9 +161,9 @@ class Unet3D(torch.nn.Module):
             ch *= 2
 
         self.bottleneck = nn.Sequential(
-            nn.Conv3d(ch, ch * 2, kernel_size=(3, 3, 3), padding=1, bias=False),
+            nn.Conv3d(ch, ch * 2, kernel_size=(3, 3, 3), padding=1),
             nn.LeakyReLU(negative_slope=0.05, inplace=True),
-            nn.Conv3d(ch * 2, ch, kernel_size=(3, 3, 3), padding=1, bias=False),
+            nn.Conv3d(ch * 2, ch, kernel_size=(3, 3, 3), padding=1),
         )
 
         self.up_blocks = nn.ModuleList()
@@ -241,17 +176,28 @@ class Unet3D(torch.nn.Module):
         self.up_blocks.append(UpConvBlock(2 * ch, ch, self.drop_prob))
 
         self.final_conv = nn.Conv3d(
-            ch, self.out_chans, kernel_size=(1, 1, 1), stride=(1, 1, 1), bias=False
+            ch, self.out_chans, kernel_size=(1, 1, 1), stride=(1, 1, 1)
         )
 
-    def normalize(self, volume: torch.Tensor) -> torch.Tensor:
-        return (volume - self.normalization_loc) / (self.normalization_scale + 1e-6)
-
-    def denormalize(self, volume: torch.Tensor) -> torch.Tensor:
-        return volume * (self.normalization_scale + 1e-6) + self.normalization_loc
+    def get_loc_and_scale(self, volume: torch.Tensor):
+        """
+        Per-sample robust location and scale of 'volume', used to normalize each model input
+        on its own rather than with dataset-wide statistics: the median, and half the
+        distance between the 15.87th and 84.13th percentiles (equal to the standard deviation
+        for Gaussian data, but insensitive to a few extreme voxels). Since forward() maps its
+        output back with the same two values, the model is exactly equivariant to shifting
+        and scaling its input, regardless of the biases and normalization layers inside.
+        """
+        flat = volume.flatten(1).sort(dim=1).values
+        n = flat.shape[1]
+        lo, loc, hi = (flat[:, round(q * (n - 1))] for q in (0.1587, 0.5, 0.8413))
+        scale = ((hi - lo) / 2).clamp_min(1e-12)
+        shape = (-1,) + (1,) * (volume.dim() - 1)
+        return loc.view(shape), scale.view(shape)
 
     def forward(self, volume: torch.Tensor) -> torch.Tensor:
-        volume = self.normalize(volume)
+        loc, scale = self.get_loc_and_scale(volume)
+        volume = (volume - loc) / scale
 
         stack = []
         output = volume
@@ -273,7 +219,7 @@ class Unet3D(torch.nn.Module):
         if self.residual:
             output = output + volume
 
-        output = self.denormalize(output)
+        output = output * scale + loc
         return output
 
 
@@ -285,14 +231,19 @@ class DownConvBlock(nn.Module):
         self.out_chans = out_chans
         self.drop_prob = drop_prob
 
+        # the convs here have no bias of their own: the instance norm right after would
+        # cancel it by subtracting the per-channel mean, so its affine shift is the bias
         self.layers = nn.Sequential(
             nn.Conv3d(in_chans, out_chans, kernel_size=(3, 3, 3), padding=1, bias=False),
+            nn.InstanceNorm3d(out_chans, affine=True),
             nn.Dropout3d(drop_prob),
             nn.LeakyReLU(negative_slope=0.05, inplace=True),
             nn.Conv3d(out_chans, out_chans, kernel_size=(3, 3, 3), padding=1, bias=False),
+            nn.InstanceNorm3d(out_chans, affine=True),
             nn.Dropout3d(drop_prob),
             nn.LeakyReLU(negative_slope=0.05, inplace=True),
             nn.Conv3d(out_chans, out_chans, kernel_size=(3, 3, 3), padding=1, bias=False),
+            nn.InstanceNorm3d(out_chans, affine=True),
             nn.Dropout3d(drop_prob),
             nn.LeakyReLU(negative_slope=0.05, inplace=True),
         )
@@ -311,12 +262,15 @@ class UpConvBlock(nn.Module):
 
         self.layers = nn.Sequential(
             nn.Conv3d(in_chans, in_chans // 2, kernel_size=(3, 3, 3), padding=1, bias=False),
+            nn.InstanceNorm3d(in_chans // 2, affine=True),
             nn.Dropout3d(drop_prob),
             nn.LeakyReLU(negative_slope=0.05, inplace=True),
             nn.Conv3d(in_chans // 2, in_chans // 2, kernel_size=(3, 3, 3), padding=1, bias=False),
+            nn.InstanceNorm3d(in_chans // 2, affine=True),
             nn.Dropout3d(drop_prob),
             nn.LeakyReLU(negative_slope=0.05, inplace=True),
             nn.Conv3d(in_chans // 2, out_chans, kernel_size=(3, 3, 3), padding=1, bias=False),
+            nn.InstanceNorm3d(out_chans, affine=True),
             nn.Dropout3d(drop_prob),
             nn.LeakyReLU(negative_slope=0.05, inplace=True),
         )
@@ -329,7 +283,7 @@ class SpatialDownSampling(nn.Module):
     def __init__(self, chans: int) -> None:
         super().__init__()
         self.layers = nn.Sequential(
-            nn.Conv3d(chans, chans, kernel_size=(3, 3, 3), stride=(2, 2, 2), padding=1, bias=False),
+            nn.Conv3d(chans, chans, kernel_size=(3, 3, 3), stride=(2, 2, 2), padding=1),
             nn.LeakyReLU(negative_slope=0.05, inplace=True),
         )
 
@@ -348,7 +302,7 @@ class SpatialUpSampling(nn.Module):
         # that unevenness.
         self.upsample = nn.Upsample(scale_factor=2, mode="nearest")
         self.conv = nn.Conv3d(
-            in_chans, out_chans, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=1, bias=False
+            in_chans, out_chans, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=1
         )
         self.activation = nn.LeakyReLU(negative_slope=0.05, inplace=True)
 

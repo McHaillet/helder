@@ -15,7 +15,6 @@ from .fit_model import LitUnet3D
 from .utils.load_function_args_from_yaml_config import \
     load_function_args_from_yaml_config
 from .utils.mrctools import load_mrc_data, save_mrc_data
-from .utils.normalization import get_avg_model_input_mean_and_std
 from .utils.subtomos import extract_subtomos, reassemble_subtomos
 
 loader = lambda yaml_config_file: load_function_args_from_yaml_config(
@@ -55,18 +54,6 @@ def refine_tomogram(
             help="Overlap between subtomograms. This determines the stride of the sliding window used to extract subtomograms. If 'None', this is set to '1/3 * subtomo_size'."
         ),
     ] = None,
-    standardize_full_tomos: Annotated[
-        bool,
-        typer.Option(
-            help="Set to 'True' if and only if 'standardize_full_tomos' was 'True' for 'helder fit-model'."
-        ),
-    ] = False,
-    recompute_normalization: Annotated[
-        bool,
-        typer.Option(
-            help="Whether to recompute the mean and variance used to normalize the tomo0s and tomo1s (see Appendix B in the paper). If `False`, the mean and variance of model inputs calculated during model fitting will be used. If `True`, the average model input mean and variance will be computed for each tomogram individually. We recommend setting this to to `True`. If you apply a model to a tomogram that was not used for model fitting or if the means and variances of the tomograms during model fitting are considerably different, recomputing the normalization is expected to be very beneficial for tomogram refinement."
-        ),
-    ] = True,
     batch_size: Annotated[
         int, typer.Option(help="Batch size for processing subtomograms.")
     ] = 1,
@@ -91,7 +78,7 @@ def refine_tomogram(
     num_workers: Annotated[
         int,
         typer.Option(
-            help="Number of CPU workers to use during the recomputation of the normalization statistics and dataloading for refining the tomograms."
+            help="Number of CPU workers to use for dataloading during tomogram refinement."
         ),
     ] = 0,
     gpu: Annotated[
@@ -144,29 +131,11 @@ def refine_tomogram(
 
     with torch.no_grad():
         for t0_file, t1_file in zip(tomo0_files, tomo1_files):
-            if recompute_normalization:
-                loc, scale = get_avg_model_input_mean_and_std(
-                    tomo_file=t0_file,
-                    subtomo_size=subtomo_size,
-                    subtomo_extraction_strides=3 * [subtomo_size - subtomo_overlap],
-                    batch_size=batch_size,
-                    standardize=standardize_full_tomos,
-                    num_workers=num_workers,
-                    verbose=True,
-                )
-            else:
-                loc, scale = (
-                    lightning_model.unet.normalization_loc.clone().detach().item(),
-                    lightning_model.unet.normalization_scale.clone().detach().item(),
-                )
-
             t_ref = _refine_single_tomogram(
                 tomo_file=t0_file,
                 lightning_model=lightning_model,
                 subtomo_size=subtomo_size,
                 subtomo_overlap=subtomo_overlap,
-                normalization_loc=loc,
-                normalization_scale=scale,
                 num_workers=num_workers,
                 batch_size=batch_size,
                 pbar_desc="Refining tomo0",
@@ -176,8 +145,6 @@ def refine_tomogram(
                 lightning_model=lightning_model,
                 subtomo_size=subtomo_size,
                 subtomo_overlap=subtomo_overlap,
-                normalization_loc=loc,
-                normalization_scale=scale,
                 num_workers=num_workers,
                 batch_size=batch_size,
                 pbar_desc="Refining tomo1",
@@ -201,8 +168,6 @@ def _refine_single_tomogram(
     lightning_model,
     subtomo_size,
     subtomo_overlap,
-    normalization_loc,
-    normalization_scale,
     num_workers=0,
     batch_size=1,
     pbar_desc="Refining tomogram",
@@ -212,9 +177,6 @@ def _refine_single_tomogram(
     # tomo is already missing-wedge-degraded from acquisition/reconstruction, so no
     # masking is applied here (see c04a4d8: masking it again is a genuine
     # double-application, harmless only for the legacy binary wedge)
-
-    tomo = (tomo / tomo.std()) * torch.tensor(normalization_scale).to(tomo.device)
-    tomo = tomo - tomo.mean() + torch.tensor(normalization_loc).to(tomo.device)
 
     subtomos, subtomo_start_coords = extract_subtomos(
         tomo=tomo.cpu(),

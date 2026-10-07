@@ -149,7 +149,6 @@ def prepare_data(
                 print(f"\
                     WARNING: Standard deviation of '{tomo0_file}' is low ({std}), which may lead to issues during model fitting!\
                     \nConsider setting 'standardize_full_tomos=True'.\
-                    \nIf you do so, you must also set 'standardize_full_tomos=True' for 'helder refine-tomogram'.\
             ")
         subtomos0, start_coords = extract_subtomos(
             tomo=tomo0,
