@@ -3,9 +3,9 @@ Tile pre-reconstructed even/odd tomograms into subtomograms and reconstruct a
 matching 3D-CTF for every tile from the tilt series .xml.
 
 Even and odd tomograms live in two separate directories with exactly matching
-file names (e.g. tomo200528120_110_10.00A.mrc). Each pair is matched to its
+file names (e.g. tomo200528120_110_10.00Apx.mrc). Each pair is matched to its
 tilt series .xml (e.g. tomo200528120_110.xml) by stripping the trailing
-`_<pixel size>A` from the tomogram name.
+`_<pixel size>Apx` from the tomogram name.
 
 Each tomogram is first normalized as a whole (mean subtracted, then divided
 by its median absolute deviation scaled by 1.4826, a robust estimate of the
@@ -105,14 +105,14 @@ def main() -> None:
     strides = None if args.stride is None else 3 * [args.stride]
 
     # Match every even tomogram to its odd tomogram (same file name) and its
-    # tilt series .xml (same name minus the trailing "_<pixel size>A").
+    # tilt series .xml (same name minus the trailing "_<pixel size>Apx").
     even_paths = sorted(args.even_dir.glob("*.mrc"))
     if not even_paths:
         raise SystemExit(f"No .mrc files found in {args.even_dir}")
     entries = []  # (even_path, odd_path, xml_path)
     for even_path in even_paths:
         odd_path = args.odd_dir / even_path.name
-        xml_path = args.xml_dir / (re.sub(r"_\d+(\.\d+)?A$", "", even_path.stem) + ".xml")
+        xml_path = args.xml_dir / (re.sub(r"_\d+(\.\d+)?Apx$", "", even_path.stem) + ".xml")
         for path in (odd_path, xml_path):
             if not path.exists():
                 raise SystemExit(f"No match for {even_path}: {path} does not exist")
