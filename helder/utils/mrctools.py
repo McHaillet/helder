@@ -17,6 +17,15 @@ def load_mrc_data(mrc_file):
     return data
 
 
+def normalize_tomo(tomo):
+    """
+    Subtracts the mean and divides by the median absolute deviation (MAD), scaled by 1.4826 so that it estimates the standard deviation for normally distributed data.
+    """
+    tomo = tomo - tomo.mean()
+    mad = (tomo - tomo.median()).abs().median()
+    return tomo / (1.4826 * mad)
+
+
 def save_mrc_data(data, mrc_file, save=False):
     """
     Saves a torch tensor as an .mrc file.
