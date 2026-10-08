@@ -92,7 +92,6 @@ def main() -> None:
     parser.add_argument("--subtomo-dir", type=Path, required=True, help="Where to save the subtomograms and CTFs")
     parser.add_argument("--box-size", type=int, required=True, help="Subtomogram + CTF box size in pixels (must be even)")
     parser.add_argument("--stride", type=int, default=None, help="Stride in pixels of the sliding window used for tiling, same along all 3 axes (default: --box-size, i.e. no overlap)")
-    parser.add_argument("--oversampling", type=float, default=2.0, help="Oversampling passed to reconstruct_subvolume_ctfs_single (default: 2.0)")
     parser.add_argument("--val-fraction", type=float, default=0.2, help="Fraction of each tomogram's tiles assigned to the validation set (default: 0.2)")
     parser.add_argument("--seed", type=int, default=0, help="Random seed for the fitting/validation split (default: 0)")
     parser.add_argument("--device", type=str, default="cpu", help="torch device to reconstruct CTFs on, e.g. 'cpu', 'cuda', 'cuda:0' (default: cpu)")
@@ -151,7 +150,7 @@ def main() -> None:
         # as warpylib's own reconstruct_full does.
         ts.volume_dimensions_physical = torch.tensor(even_tomo.shape, dtype=torch.float32, device=device).flip(0) * pixel_size
         ctf_vols = batched_reconstruct(
-            lambda p: ts.reconstruct_subvolume_ctfs_single(p, pixel_size=pixel_size, size=args.box_size, oversampling=args.oversampling, apply_ctf=True),
+            lambda p: ts.reconstruct_subvolume_ctfs_single(p, pixel_size=pixel_size, size=args.box_size, oversampling=1.0, apply_ctf=True),
             positions.to(device), args.batch_size,
         )
 
