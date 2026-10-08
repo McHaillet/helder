@@ -179,15 +179,9 @@ def main() -> None:
         for chunk in tqdm.tqdm(position_chunks, desc="Refining"):
             subtomo0 = ts.reconstruct_subvolumes_single(images_even, chunk, pixel_size=args.pixel_size, size=args.box_size, oversampling=args.oversampling, apply_ctf=True, correct_attenuation=True)
             subtomo1 = ts.reconstruct_subvolumes_single(images_odd, chunk, pixel_size=args.pixel_size, size=args.box_size, oversampling=args.oversampling, apply_ctf=True, correct_attenuation=True)
-            ctf = ts.reconstruct_subvolume_ctfs_single(chunk, pixel_size=args.pixel_size, size=args.box_size, oversampling=args.oversampling, apply_ctf=True)
 
             x0 = model(subtomo0)
-            x0 = apply_fourier_mask_to_tomo(x0, ctf)
-            x0 = model(x0)
-
             x1 = model(subtomo1)
-            x1 = apply_fourier_mask_to_tomo(x1, ctf)
-            x1 = model(x1)
 
             refined_chunk = (x0 + x1) / 2
             refined_subtomos.extend(refined_chunk.cpu())
