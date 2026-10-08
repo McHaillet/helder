@@ -138,7 +138,15 @@ def main() -> None:
     box_physical = args.box_size * args.pixel_size
 
     ts = TiltSeries(str(args.xml_file)).to(device)
-    axis_centers = make_grid_axis_centers(ts.volume_dimensions_physical, box_physical, args.overlap)
+    # Output voxel dimensions chosen to match Warp's own reconstruction of the same tilt
+    # series, so the refined tomogram has exactly the raw tomogram's shape: floor the
+    # physical size in voxels, then round up to even (6389.76 A / 10 A -> 638,
+    # 3194.88 A / 10 A -> 320, as Warp writes them). The tile grid is laid out over this
+    # voxel volume rather than the physical dimensions, so that the rounding never leaves
+    # an uncovered plane at the far edge.
+    tomo_shape = torch.floor(ts.volume_dimensions_physical / args.pixel_size)
+    tomo_shape = (torch.ceil(tomo_shape / 2) * 2).to(torch.int64)
+    axis_centers = make_grid_axis_centers(tomo_shape * args.pixel_size, box_physical, args.overlap)
     positions = torch.cartesian_prod(*axis_centers).reshape(-1, 3)
     print(f"{args.xml_file.name}: {positions.shape[0]} positions")
 
@@ -189,7 +197,6 @@ def main() -> None:
     # positions are box *centers*; convert to nearest-voxel start corners, clamped
     # to >= 0 for the edge case where the tilt series volume is smaller than one box
     start_coords = torch.round(positions / args.pixel_size - args.box_size / 2).clamp(min=0).to(torch.int64)
-    tomo_shape = torch.round(ts.volume_dimensions_physical / args.pixel_size).to(torch.int64)
     # ts.volume_dimensions_physical (and therefore positions/start_coords/tomo_shape
     # derived from it above) is ordered X,Y,Z, but the subvolume tensors warpylib's
     # reconstruct_subvolumes_single actually returns are axis-ordered Z,Y,X.
