@@ -83,6 +83,12 @@ def fit_model(
             help="Clip gradients to this max norm before each optimizer step, to guard against instability from the self-referential equivariance loss. Set to 0 to disable."
         ),
     ] = 1.0,
+    accumulate_grad_batches: Annotated[
+        int,
+        typer.Option(
+            help="Accumulate gradients over this many batches before each optimizer step, giving an effective batch size of batch_size * accumulate_grad_batches (* number of GPUs) without the extra memory. 1 means no accumulation."
+        ),
+    ] = 1,
     logger: Annotated[
         str,
         typer.Option(
@@ -264,6 +270,7 @@ def fit_model(
         callbacks=callbacks,
         detect_anomaly=True,
         gradient_clip_val=gradient_clip_val,
+        accumulate_grad_batches=accumulate_grad_batches,
     )
 
     # setup dataloaders
