@@ -80,8 +80,9 @@ def test_fit_model_raises_on_batch_size_of_one(make_subtomo_dir, tmp_path):
         fit_model(**_fit_kwargs(root, tmp_path / "logs", crop_size=24, batch_size=1))
 
 
-def test_fit_model_raises_when_last_batch_has_one_example(make_subtomo_dir, tmp_path):
-    # raises before the Trainer/GPU is ever touched, so no GPU needed here
-    root = make_subtomo_dir(native_size=24, crop_size=24, n_fitting=5, n_val=0)
-    with pytest.raises(ValueError, match="last batch"):
-        fit_model(**_fit_kwargs(root, tmp_path / "logs", crop_size=24))
+@requires_gpu
+def test_fit_model_completes_when_last_batch_would_have_one_example(make_subtomo_dir, tmp_path):
+    # 5 and 3 sub-tomograms with batch_size=2 would leave a last batch of a single example,
+    # which the equivariance loss cannot handle - the dataloaders must drop it
+    root = make_subtomo_dir(native_size=24, crop_size=24, n_fitting=5, n_val=3)
+    fit_model(**_fit_kwargs(root, tmp_path / "logs", crop_size=24))

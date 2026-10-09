@@ -195,15 +195,6 @@ def fit_model(
     fitting_dataset = SubtomoDataset(subtomo_dir=f"{subtomo_dir}/fitting_subtomos")
     if val_data_exists:
         val_dataset = SubtomoDataset(subtomo_dir=f"{subtomo_dir}/val_subtomos")
-    for name, dataset in [("fitting", fitting_dataset)] + (
-        [("validation", val_dataset)] if val_data_exists else []
-    ):
-        if len(dataset) % batch_size == 1:
-            raise ValueError(
-                f"The {len(dataset)} {name} sub-tomograms leave a last batch of a single "
-                f"example with batch_size={batch_size}, which the equivariance loss cannot "
-                "handle (see LitUnet3D._step). Choose a different batch_size."
-            )
 
     # the model is run directly on the on-disk subtomo0/subtomo1 every step (see
     # LitUnet3D._step), rotating its own estimate in place with one of the 20 grid-aligned
@@ -296,6 +287,9 @@ def fit_model(
         persistent_workers=True,
         pin_memory=True,
         shuffle=True,
+        # a smaller last batch could consist of a single example, which the equivariance
+        # loss cannot handle (see LitUnet3D._step)
+        drop_last=True,
     )
     if val_data_exists:
         val_dataloader = DataLoader(
@@ -304,6 +298,7 @@ def fit_model(
             num_workers=num_workers,
             shuffle=False,
             pin_memory=True,
+            drop_last=True,
         )
     else:
         val_dataloader = None
