@@ -63,18 +63,27 @@ class LitUnet3D(pl.LightningModule):
         subtomo0 = batch["subtomo0"]
         subtomo1 = batch["subtomo1"]
         ctf = batch["ctf"]
+        batch_size = subtomo0.shape[0]
+        if batch_size < 2:
+            raise ValueError(
+                "The equivariance term degrades each estimate with the ctf and synthetic "
+                "noise of another example in the batch, which needs at least 2 examples "
+                f"per batch, got {batch_size}."
+            )
 
-        # alternate which estimate is rotated + re-degraded to build the equivariance term's
-        # model input ("x_hat2"). The same choice also picks which of the two cross-wise
-        # data-consistency pairings this step evaluates (rather than always summing both):
-        # both dc_loss and eq_loss compare against the same cross-wise raw measurement
-        # 'y_cross' (see data_consistency_loss's docstring for why eq_loss is also just a
-        # data-consistency comparison, on a different estimate of the same target).
+        # alternate which of the two observations the model is fitted on ("source"); the
+        # other one ("cross") is the target of both loss terms, so that the model can never
+        # lower either by reproducing the noise of its own input
         use_branch0_as_source = (
             (batch_idx % 2 == 0) if deterministic else (random.random() < 0.5)
         )
-        x_hat_source = self(subtomo0 if use_branch0_as_source else subtomo1)
+        y_source = subtomo0 if use_branch0_as_source else subtomo1
         y_cross = subtomo1 if use_branch0_as_source else subtomo0
+        x_hat_source = self(y_source)
+        # the model's estimate from the other observation, only used as the fixed target of
+        # the equivariance term below
+        with torch.no_grad():
+            x_hat_cross = self(y_cross)
         dc_loss = data_consistency_loss(x_hat_source, y_cross, ctf)
 
         # sampled once and reused for both the forward and inverse rotation below, so they
@@ -96,10 +105,17 @@ class LitUnet3D(pl.LightningModule):
                 int(batch["index"][0])
             )
         noise = synthesize_noise(subtomo0, subtomo1, generator=generator)
-        z = apply_fourier_mask_to_tomo(x_hat_source_rot, ctf) + noise
+        # degrade each estimate with the ctf and the noise of another example in the batch,
+        # kept together as a pair, so that the model sees more ctfs than the rotations of its
+        # own. Rolling by a non-zero shift (rather than a random permutation) guarantees
+        # that no example keeps its own pair
+        shift = 1 if deterministic else random.randrange(1, batch_size)
+        z = apply_fourier_mask_to_tomo(
+            x_hat_source_rot, ctf.roll(shift, dims=0)
+        ) + noise.roll(shift, dims=0)
         x_double_hat = self(z)
         x_double_hat_unrot = self._rotate_batch(x_double_hat, rot_mats, inverse=True)
-        eq_loss = data_consistency_loss(x_double_hat_unrot, y_cross, ctf)
+        eq_loss = (x_double_hat_unrot - x_hat_cross).abs().mean()
 
         loss = dc_loss + self.lambda_ * eq_loss
         return loss, dc_loss, eq_loss

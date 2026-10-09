@@ -134,6 +134,12 @@ def fit_model(
     Fit a U-Net model for denoising and missing wedge reconstruction on sub-tomograms. Typically run after `prepare-data`.
     """
     pl.seed_everything(seed, workers=True)
+    if batch_size < 2:
+        raise ValueError(
+            "batch_size must be at least 2: the equivariance loss degrades each estimate "
+            "with the ctf and synthetic noise of another example in the batch (see "
+            f"LitUnet3D._step). Got batch_size={batch_size}."
+        )
     # setup subtomo_dir
     if subtomo_dir is None:
         if project_dir is not None:
@@ -189,6 +195,15 @@ def fit_model(
     fitting_dataset = SubtomoDataset(subtomo_dir=f"{subtomo_dir}/fitting_subtomos")
     if val_data_exists:
         val_dataset = SubtomoDataset(subtomo_dir=f"{subtomo_dir}/val_subtomos")
+    for name, dataset in [("fitting", fitting_dataset)] + (
+        [("validation", val_dataset)] if val_data_exists else []
+    ):
+        if len(dataset) % batch_size == 1:
+            raise ValueError(
+                f"The {len(dataset)} {name} sub-tomograms leave a last batch of a single "
+                f"example with batch_size={batch_size}, which the equivariance loss cannot "
+                "handle (see LitUnet3D._step). Choose a different batch_size."
+            )
 
     # the model is run directly on the on-disk subtomo0/subtomo1 every step (see
     # LitUnet3D._step), rotating its own estimate in place with one of the 20 grid-aligned

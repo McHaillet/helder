@@ -19,10 +19,8 @@ def data_consistency_loss(x_hat, y, ctf):
     target are ~0 there) - unlike the old two-region masked_loss, no extra region weighting
     is needed to handle this, which matters for a continuous (non-binary) CTF.
 
-    LitUnet3D._step calls this twice per step, against the same cross-wise 'y': once directly
-    on the model's estimate ("dc_loss"), and once on the rotate+re-mask+refeed estimate used
-    for the equivariance term ("eq_loss") - see its docstring/comments for why the latter also
-    counts as a data-consistency comparison, not a separate loss form.
+    LitUnet3D._step uses this for its "dc_loss" only: the equivariance term ("eq_loss") is a
+    plain L1 loss between two estimates of the model, with no 'ctf' involved.
     """
     residual = (apply_fourier_mask_to_tomo(x_hat, ctf) - y).abs()
     return residual.mean()

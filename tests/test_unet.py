@@ -4,6 +4,7 @@ Pure CPU/torch - no GPU needed (only fit_model's Trainer requires one).
 """
 import random
 
+import pytest
 import torch
 
 from helder.utils.unet import LitUnet3D
@@ -68,6 +69,50 @@ def test_step_combines_dc_and_eq_losses_weighted_by_lambda():
         assert torch.isfinite(term)
     # dc_loss's gradient must flow through x_hat_source
     assert dc_loss.requires_grad
+
+
+def test_step_raises_on_batch_of_one():
+    """
+    The equivariance term degrades each estimate with the ctf and noise of another example
+    in the batch, which a single example cannot provide.
+    """
+    lit_unet = _make_lit_unet()
+    N = 8
+    batch = {
+        "subtomo0": torch.randn(1, N, N, N),
+        "subtomo1": torch.randn(1, N, N, N),
+        "ctf": torch.rand(1, N, N, N // 2 + 1).clamp(0, 1),
+        "index": [0],
+    }
+    with pytest.raises(ValueError, match="at least 2"):
+        lit_unet._step(batch, batch_idx=0, deterministic=True)
+
+
+def test_eq_loss_uses_ctf_and_noise_of_another_example():
+    """
+    The equivariance term's model input must be built with the ctf of another example, so
+    changing only example 1's ctf must change eq_loss through example 0's model input, while
+    leaving dc_loss's contribution of example 0 untouched.
+    """
+    torch.manual_seed(0)
+    lit_unet = _make_lit_unet().eval()
+    N = 8
+    batch = {
+        "subtomo0": torch.randn(2, N, N, N),
+        "subtomo1": torch.randn(2, N, N, N),
+        "ctf": torch.ones(2, N, N, N // 2 + 1),
+        "index": [0, 1],
+    }
+    captured = []
+    lit_unet.unet.register_forward_hook(lambda module, args, output: captured.append(args[0]))
+    with torch.no_grad():
+        lit_unet._step(batch, batch_idx=0, deterministic=True)
+        batch["ctf"][1] = 0.0
+        lit_unet._step(batch, batch_idx=0, deterministic=True)
+    # per step the model is run on y_source, y_cross and z, in that order
+    z, z_zeroed_ctf = captured[2], captured[5]
+    assert not torch.allclose(z[0], z_zeroed_ctf[0])
+    assert torch.allclose(z[1], z_zeroed_ctf[1])
 
 
 def test_forward_is_equivariant_to_input_shift_and_scale():

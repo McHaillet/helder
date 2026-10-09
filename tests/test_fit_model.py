@@ -18,12 +18,12 @@ requires_gpu = pytest.mark.skipif(
 )
 
 
-def _fit_kwargs(subtomo_dir, logdir, crop_size, num_downsample_layers=3, lambda_=2.0):
+def _fit_kwargs(subtomo_dir, logdir, crop_size, num_downsample_layers=3, lambda_=2.0, batch_size=2):
     return dict(
         unet_params_dict={"chans": 4, "num_downsample_layers": num_downsample_layers, "drop_prob": 0.0},
         adam_params_dict={"lr": 1e-3},
         num_epochs=2,
-        batch_size=2,
+        batch_size=batch_size,
         subtomo_size=crop_size,
         gpu=[0],
         num_workers=2,
@@ -69,4 +69,19 @@ def test_fit_model_raises_when_native_size_not_equal_to_subtomo_size(make_subtom
     # on-disk size must equal subtomo_size - no cropping happens anymore.
     root = make_subtomo_dir(native_size=32, crop_size=24, n_fitting=6, n_val=2)
     with pytest.raises(ValueError, match="equal"):
+        fit_model(**_fit_kwargs(root, tmp_path / "logs", crop_size=24))
+
+
+def test_fit_model_raises_on_batch_size_of_one(make_subtomo_dir, tmp_path):
+    # raises before the Trainer/GPU is ever touched, so no GPU needed here. The equivariance
+    # loss degrades each estimate with the ctf and noise of another example in the batch.
+    root = make_subtomo_dir(native_size=24, crop_size=24, n_fitting=4, n_val=0)
+    with pytest.raises(ValueError, match="batch_size"):
+        fit_model(**_fit_kwargs(root, tmp_path / "logs", crop_size=24, batch_size=1))
+
+
+def test_fit_model_raises_when_last_batch_has_one_example(make_subtomo_dir, tmp_path):
+    # raises before the Trainer/GPU is ever touched, so no GPU needed here
+    root = make_subtomo_dir(native_size=24, crop_size=24, n_fitting=5, n_val=0)
+    with pytest.raises(ValueError, match="last batch"):
         fit_model(**_fit_kwargs(root, tmp_path / "logs", crop_size=24))
