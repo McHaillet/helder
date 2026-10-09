@@ -114,6 +114,12 @@ def fit_model(
     resume_from_checkpoint: Annotated[
         Optional[str], typer.Option(help="Continue model fitting from a checkpoint.")
     ] = None,
+    init_from_checkpoint: Annotated[
+        Optional[str],
+        typer.Option(
+            help="Start model fitting from the model weights in a checkpoint. Unlike resume_from_checkpoint, only the weights are loaded: fitting starts at epoch 0 with a new optimizer, so that e.g. the learning rate or lambda can be changed. unet_params_dict must match the checkpoint's."
+        ),
+    ] = None,
     distributed_backend: Annotated[
         str, 
         typer.Option(help="Distributed backend to use when fitting on multiple GPUs, e.g, 'nccl' (default) or 'gloo'. Ignored if fitting on a single GPU.")
@@ -134,6 +140,10 @@ def fit_model(
     Fit a U-Net model for denoising and missing wedge reconstruction on sub-tomograms. Typically run after `prepare-data`.
     """
     pl.seed_everything(seed, workers=True)
+    if init_from_checkpoint is not None and resume_from_checkpoint is not None:
+        raise ValueError(
+            "init_from_checkpoint and resume_from_checkpoint cannot be used together."
+        )
     if batch_size < 2:
         raise ValueError(
             "batch_size must be at least 2: the equivariance loss degrades each estimate "
@@ -257,6 +267,9 @@ def fit_model(
         subtomo_size=subtomo_size,
         lambda_=lambda_,
     )
+    if init_from_checkpoint is not None:
+        checkpoint = torch.load(init_from_checkpoint, map_location="cpu")
+        lit_unet.load_state_dict(checkpoint["state_dict"])
     # initialize the trainer
     devices = [gpu] if isinstance(gpu, int) else gpu
     strategy = pl.strategies.DDPStrategy(

@@ -86,3 +86,32 @@ def test_fit_model_completes_when_last_batch_would_have_one_example(make_subtomo
     # which the equivariance loss cannot handle - the dataloaders must drop it
     root = make_subtomo_dir(native_size=24, crop_size=24, n_fitting=5, n_val=3)
     fit_model(**_fit_kwargs(root, tmp_path / "logs", crop_size=24))
+
+
+def test_fit_model_raises_when_both_init_and_resume_checkpoint_are_given(make_subtomo_dir, tmp_path):
+    # raises before the Trainer/GPU is ever touched, so no GPU needed here
+    root = make_subtomo_dir(native_size=24, crop_size=24, n_fitting=4, n_val=0)
+    kwargs = _fit_kwargs(root, tmp_path / "logs", crop_size=24)
+    with pytest.raises(ValueError, match="cannot be used together"):
+        fit_model(**kwargs, init_from_checkpoint="a.ckpt", resume_from_checkpoint="b.ckpt")
+
+
+@requires_gpu
+def test_fit_model_init_from_checkpoint_loads_weights_and_restarts_epochs(make_subtomo_dir, tmp_path):
+    root = make_subtomo_dir(native_size=24, crop_size=24, n_fitting=6, n_val=2)
+    kwargs = _fit_kwargs(root, tmp_path / "logs", crop_size=24)
+    kwargs["save_model_every_n_epochs"] = 1
+    fit_model(**kwargs)
+    (first_ckpt,) = (tmp_path / "logs").glob("version_0/checkpoints/epoch/epoch=1.ckpt")
+
+    # with a learning rate of 0 the weights must come out exactly as they were loaded
+    kwargs["adam_params_dict"] = {"lr": 0.0}
+    fit_model(**kwargs, init_from_checkpoint=str(first_ckpt))
+    # the epoch count restarts, unlike with resume_from_checkpoint
+    (second_ckpt,) = (tmp_path / "logs").glob("version_1/checkpoints/epoch/epoch=0.ckpt")
+
+    first = torch.load(first_ckpt, map_location="cpu")["state_dict"]
+    second = torch.load(second_ckpt, map_location="cpu")["state_dict"]
+    assert first.keys() == second.keys()
+    for key in first:
+        assert torch.equal(first[key], second[key])
