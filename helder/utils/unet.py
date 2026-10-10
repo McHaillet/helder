@@ -38,25 +38,22 @@ class LitUnet3D(pl.LightningModule):
     def _sample_rotations(self, indices, deterministic):
         """
         Samples one grid rotation per volume (see helder.utils.rotation.get_grid_rotations).
-        Callers that need to later undo the same rotation (via _rotate_batch's 'inverse')
-        must reuse the returned list rather than re-sampling by 'index': when 'deterministic'
-        is False, sample_grid_rotation draws from the shared global 'random' state, so two
-        separate calls - even with the same 'index' - are not guaranteed to agree.
+        Callers that need to apply the same rotations to several batches must reuse the
+        returned list rather than re-sampling by 'index': when 'deterministic' is False,
+        sample_grid_rotation draws from the shared global 'random' state, so two separate
+        calls - even with the same 'index' - are not guaranteed to agree.
         """
         return [sample_grid_rotation(int(index), deterministic) for index in indices]
 
-    def _rotate_batch(self, vol_batch, rot_mats, inverse=False):
+    def _rotate_batch(self, vol_batch, rot_mats):
         """
         Rotates each volume in 'vol_batch' by the corresponding matrix in 'rot_mats' (from
         _sample_rotations). This is exact (no interpolation), so the output has exactly the
-        same shape as the input and needs no cropping. If 'inverse' is True, applies the
-        inverse rotation instead (the transpose of the signed permutation matrix, which
-        exactly undoes rotate_vol for these grid-aligned rotations) - pass the *same*
-        'rot_mats' used for the corresponding forward call so the two exactly cancel.
+        same shape as the input and needs no cropping.
         """
         rotated = []
         for vol, rot_mat in zip(vol_batch, rot_mats):
-            rotated.append(rotate_vol(vol, rot_mat.T if inverse else rot_mat))
+            rotated.append(rotate_vol(vol, rot_mat))
         return torch.stack(rotated)
 
     def _step(self, batch, deterministic):
@@ -82,9 +79,11 @@ class LitUnet3D(pl.LightningModule):
             x_hat1, subtomo0, ctf
         )
 
-        # sampled once and reused for both pairings and for both the forward and inverse
-        # rotation below, so they are guaranteed to exactly cancel (see _sample_rotations)
+        # the equivariance term is evaluated in the rotated frame: each rotated estimate is
+        # both the source of one pairing's model input and the target of the other pairing
         rot_mats = self._sample_rotations(batch["index"], deterministic)
+        x_hat0_rot = self._rotate_batch(x_hat0, rot_mats)
+        x_hat1_rot = self._rotate_batch(x_hat1, rot_mats)
 
         generator = None
         if deterministic:
@@ -99,8 +98,10 @@ class LitUnet3D(pl.LightningModule):
         ctf_shuffled = ctf.roll(shift, dims=0)
 
         eq_loss = 0.0
-        for x_hat_source, x_hat_cross in [(x_hat0, x_hat1), (x_hat1, x_hat0)]:
-            x_hat_source_rot = self._rotate_batch(x_hat_source, rot_mats)
+        for x_hat_source_rot, x_hat_cross_rot in [
+            (x_hat0_rot, x_hat1_rot),
+            (x_hat1_rot, x_hat0_rot),
+        ]:
             # the re-masked estimate is noise-free, unlike the raw observations the model
             # sees in its first application, so add synthetic noise to make it a new noisy
             # observation (a separate realization per pairing). The noise is added after
@@ -110,8 +111,7 @@ class LitUnet3D(pl.LightningModule):
             z = apply_fourier_mask_to_tomo(x_hat_source_rot, ctf_shuffled) + noise.roll(
                 shift, dims=0
             )
-            x_double_hat_unrot = self._rotate_batch(self(z), rot_mats, inverse=True)
-            eq_loss = eq_loss + (x_double_hat_unrot - x_hat_cross).abs().mean()
+            eq_loss = eq_loss + (self(z) - x_hat_cross_rot).abs().mean()
 
         loss = dc_loss + self.lambda_ * eq_loss
         return loss, dc_loss, eq_loss
