@@ -20,7 +20,7 @@ def data_consistency_loss(x_hat, y, ctf):
     is needed to handle this, which matters for a continuous (non-binary) CTF.
 
     LitUnet3D._step uses this for its "dc_loss" only: the equivariance term ("eq_loss") is a
-    plain L1 loss between two estimates of the model, with no 'ctf' involved.
+    plain L2 loss between two estimates of the model, with no 'ctf' involved.
     """
-    residual = (apply_fourier_mask_to_tomo(x_hat, ctf) - y).abs()
-    return residual.mean()
+    residual = apply_fourier_mask_to_tomo(x_hat, ctf) - y
+    return residual.square().mean()

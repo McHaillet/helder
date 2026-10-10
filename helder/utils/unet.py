@@ -19,7 +19,7 @@ class LitUnet3D(pl.LightningModule):
         unet_params,
         adam_params,
         subtomo_size,
-        lambda_=2.0,
+        lambda_=1.0,
     ):
         super().__init__()
         self.unet_params = unet_params
@@ -70,9 +70,7 @@ class LitUnet3D(pl.LightningModule):
 
         # both terms are cross-wise and summed over both pairings: the estimate from one
         # observation is always compared against (the estimate from) the other one, so that
-        # the model can never lower either by reproducing the noise of its own input.
-        # Nothing is detached, as in classic equivariant imaging: the gradient flows through
-        # every application of self(), so 'loss' is the objective that is actually minimized
+        # the model can never lower either by reproducing the noise of its own input
         x_hat0 = self(subtomo0)
         x_hat1 = self(subtomo1)
         dc_loss = data_consistency_loss(x_hat0, subtomo1, ctf) + data_consistency_loss(
@@ -80,7 +78,11 @@ class LitUnet3D(pl.LightningModule):
         )
 
         # the equivariance term is evaluated in the rotated frame: each rotated estimate is
-        # both the source of one pairing's model input and the target of the other pairing
+        # both the source of one pairing's model input and the target of the other pairing.
+        # The gradient flows through the source into the first application of self(), but
+        # the target is detached: otherwise the model can zero this term by making all of
+        # its estimates empty, which the data-consistency term is too weak to prevent at
+        # low signal-to-noise ratio
         rot_mats = self._sample_rotations(batch["index"], deterministic)
         x_hat0_rot = self._rotate_batch(x_hat0, rot_mats)
         x_hat1_rot = self._rotate_batch(x_hat1, rot_mats)
@@ -111,7 +113,7 @@ class LitUnet3D(pl.LightningModule):
             z = apply_fourier_mask_to_tomo(x_hat_source_rot, ctf_shuffled) + noise.roll(
                 shift, dims=0
             )
-            eq_loss = eq_loss + (self(z) - x_hat_cross_rot).abs().mean()
+            eq_loss = eq_loss + (self(z) - x_hat_cross_rot.detach()).square().mean()
 
         loss = dc_loss + self.lambda_ * eq_loss
         return loss, dc_loss, eq_loss

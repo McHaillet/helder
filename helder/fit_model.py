@@ -76,7 +76,7 @@ def fit_model(
             "--lambda",
             help="Weight of the equivariance loss term relative to the data-consistency loss term: total loss = data_consistency_loss + lambda * equivariance_loss."
         ),
-    ] = 2.0,
+    ] = 1.0,
     gradient_clip_val: Annotated[
         float,
         typer.Option(
