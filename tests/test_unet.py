@@ -63,12 +63,32 @@ def test_step_combines_dc_and_eq_losses_weighted_by_lambda():
         "ctf": torch.rand(2, N, N, N // 2 + 1).clamp(0, 1),
         "index": [0, 1],
     }
-    loss, dc_loss, eq_loss = lit_unet._step(batch, batch_idx=0, deterministic=True)
+    loss, dc_loss, eq_loss = lit_unet._step(batch, deterministic=True)
     assert torch.allclose(loss, dc_loss + 2.0 * eq_loss)
     for term in (loss, dc_loss, eq_loss):
         assert torch.isfinite(term)
-    # dc_loss's gradient must flow through x_hat_source
-    assert dc_loss.requires_grad
+    assert dc_loss.requires_grad and eq_loss.requires_grad
+
+
+def test_step_does_not_stop_gradients_into_the_second_model_application():
+    """
+    As in classic equivariant imaging nothing is detached: the re-degraded model input of
+    the equivariance term must still be attached to the first application of the model.
+    """
+    torch.manual_seed(0)
+    lit_unet = _make_lit_unet()
+    N = 8
+    batch = {
+        "subtomo0": torch.randn(2, N, N, N),
+        "subtomo1": torch.randn(2, N, N, N),
+        "ctf": torch.rand(2, N, N, N // 2 + 1).clamp(0, 1),
+        "index": [0, 1],
+    }
+    captured = []
+    lit_unet.unet.register_forward_hook(lambda module, args, output: captured.append(args[0]))
+    lit_unet._step(batch, deterministic=True)
+    # the model is run on subtomo0, subtomo1 and then on the two re-degraded estimates
+    assert [inp.requires_grad for inp in captured] == [False, False, True, True]
 
 
 def test_step_raises_on_batch_of_one():
@@ -85,7 +105,7 @@ def test_step_raises_on_batch_of_one():
         "index": [0],
     }
     with pytest.raises(ValueError, match="at least 2"):
-        lit_unet._step(batch, batch_idx=0, deterministic=True)
+        lit_unet._step(batch, deterministic=True)
 
 
 def test_eq_loss_uses_ctf_and_noise_of_another_example():
@@ -106,13 +126,14 @@ def test_eq_loss_uses_ctf_and_noise_of_another_example():
     captured = []
     lit_unet.unet.register_forward_hook(lambda module, args, output: captured.append(args[0]))
     with torch.no_grad():
-        lit_unet._step(batch, batch_idx=0, deterministic=True)
+        lit_unet._step(batch, deterministic=True)
         batch["ctf"][1] = 0.0
-        lit_unet._step(batch, batch_idx=0, deterministic=True)
-    # per step the model is run on y_source, y_cross and z, in that order
-    z, z_zeroed_ctf = captured[2], captured[5]
-    assert not torch.allclose(z[0], z_zeroed_ctf[0])
-    assert torch.allclose(z[1], z_zeroed_ctf[1])
+        lit_unet._step(batch, deterministic=True)
+    # per step the model is run on subtomo0, subtomo1 and then on the two re-degraded
+    # estimates, in that order
+    for z, z_zeroed_ctf in [(captured[2], captured[6]), (captured[3], captured[7])]:
+        assert not torch.allclose(z[0], z_zeroed_ctf[0])
+        assert torch.allclose(z[1], z_zeroed_ctf[1])
 
 
 def test_forward_is_equivariant_to_input_shift_and_scale():
@@ -176,5 +197,5 @@ def test_step_is_reproducible_when_deterministic():
         "index": [0, 1],
     }
     with torch.no_grad():
-        losses = [lit_unet._step(batch, batch_idx=0, deterministic=True)[0] for _ in range(2)]
+        losses = [lit_unet._step(batch, deterministic=True)[0] for _ in range(2)]
     assert torch.equal(losses[0], losses[1])

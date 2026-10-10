@@ -59,7 +59,7 @@ class LitUnet3D(pl.LightningModule):
             rotated.append(rotate_vol(vol, rot_mat.T if inverse else rot_mat))
         return torch.stack(rotated)
 
-    def _step(self, batch, batch_idx, deterministic):
+    def _step(self, batch, deterministic):
         subtomo0 = batch["subtomo0"]
         subtomo1 = batch["subtomo1"]
         ctf = batch["ctf"]
@@ -71,57 +71,53 @@ class LitUnet3D(pl.LightningModule):
                 f"per batch, got {batch_size}."
             )
 
-        # alternate which of the two observations the model is fitted on ("source"); the
-        # other one ("cross") is the target of both loss terms, so that the model can never
-        # lower either by reproducing the noise of its own input
-        use_branch0_as_source = (
-            (batch_idx % 2 == 0) if deterministic else (random.random() < 0.5)
+        # both terms are cross-wise and summed over both pairings: the estimate from one
+        # observation is always compared against (the estimate from) the other one, so that
+        # the model can never lower either by reproducing the noise of its own input.
+        # Nothing is detached, as in classic equivariant imaging: the gradient flows through
+        # every application of self(), so 'loss' is the objective that is actually minimized
+        x_hat0 = self(subtomo0)
+        x_hat1 = self(subtomo1)
+        dc_loss = data_consistency_loss(x_hat0, subtomo1, ctf) + data_consistency_loss(
+            x_hat1, subtomo0, ctf
         )
-        y_source = subtomo0 if use_branch0_as_source else subtomo1
-        y_cross = subtomo1 if use_branch0_as_source else subtomo0
-        x_hat_source = self(y_source)
-        # the model's estimate from the other observation, only used as the fixed target of
-        # the equivariance term below
-        with torch.no_grad():
-            x_hat_cross = self(y_cross)
-        dc_loss = data_consistency_loss(x_hat_source, y_cross, ctf)
 
-        # sampled once and reused for both the forward and inverse rotation below, so they
-        # are guaranteed to exactly cancel (see _sample_rotations)
+        # sampled once and reused for both pairings and for both the forward and inverse
+        # rotation below, so they are guaranteed to exactly cancel (see _sample_rotations)
         rot_mats = self._sample_rotations(batch["index"], deterministic)
 
-        # rotate_vol/_rotate_batch is differentiable, but x_hat_source is detached here
-        # anyway by design (standard equivariant-imaging stop-gradient): the gradient of
-        # eq_loss should only flow through the second application of self() below
-        x_hat_source_rot = self._rotate_batch(x_hat_source.detach(), rot_mats)
-
-        # the re-masked estimate is noise-free, unlike the raw observations the model sees in
-        # its first application, so add synthetic noise to make it a new noisy observation.
-        # The noise is added after rotating and re-masking, and is not rotated itself: it
-        # belongs to the acquisition geometry, like 'ctf'
         generator = None
         if deterministic:
             generator = torch.Generator(device=subtomo0.device).manual_seed(
                 int(batch["index"][0])
             )
-        noise = synthesize_noise(subtomo0, subtomo1, generator=generator)
         # degrade each estimate with the ctf and the noise of another example in the batch,
         # kept together as a pair, so that the model sees more ctfs than the rotations of its
         # own. Rolling by a non-zero shift (rather than a random permutation) guarantees
         # that no example keeps its own pair
         shift = 1 if deterministic else random.randrange(1, batch_size)
-        z = apply_fourier_mask_to_tomo(
-            x_hat_source_rot, ctf.roll(shift, dims=0)
-        ) + noise.roll(shift, dims=0)
-        x_double_hat = self(z)
-        x_double_hat_unrot = self._rotate_batch(x_double_hat, rot_mats, inverse=True)
-        eq_loss = (x_double_hat_unrot - x_hat_cross).abs().mean()
+        ctf_shuffled = ctf.roll(shift, dims=0)
+
+        eq_loss = 0.0
+        for x_hat_source, x_hat_cross in [(x_hat0, x_hat1), (x_hat1, x_hat0)]:
+            x_hat_source_rot = self._rotate_batch(x_hat_source, rot_mats)
+            # the re-masked estimate is noise-free, unlike the raw observations the model
+            # sees in its first application, so add synthetic noise to make it a new noisy
+            # observation (a separate realization per pairing). The noise is added after
+            # rotating and re-masking, and is not rotated itself: it belongs to the
+            # acquisition geometry, like 'ctf'
+            noise = synthesize_noise(subtomo0, subtomo1, generator=generator)
+            z = apply_fourier_mask_to_tomo(x_hat_source_rot, ctf_shuffled) + noise.roll(
+                shift, dims=0
+            )
+            x_double_hat_unrot = self._rotate_batch(self(z), rot_mats, inverse=True)
+            eq_loss = eq_loss + (x_double_hat_unrot - x_hat_cross).abs().mean()
 
         loss = dc_loss + self.lambda_ * eq_loss
         return loss, dc_loss, eq_loss
 
     def training_step(self, batch, batch_idx):
-        loss, dc_loss, eq_loss = self._step(batch, batch_idx, deterministic=False)
+        loss, dc_loss, eq_loss = self._step(batch, deterministic=False)
         # sync_dist=True: under multi-GPU DDP each rank only sees its own shard, so without
         # this the ModelCheckpoint callbacks that monitor "fitting_loss"/"val_loss" (see
         # fit_model.py) would select checkpoints based on a single rank's partial view of
@@ -132,7 +128,7 @@ class LitUnet3D(pl.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        loss, dc_loss, eq_loss = self._step(batch, batch_idx, deterministic=True)
+        loss, dc_loss, eq_loss = self._step(batch, deterministic=True)
         self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
         self.log("val_dc_loss", dc_loss, on_step=False, on_epoch=True, logger=True, sync_dist=True)
         self.log("val_eq_loss", eq_loss, on_step=False, on_epoch=True, logger=True, sync_dist=True)
