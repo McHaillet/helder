@@ -79,13 +79,14 @@ class LitUnet3D(pl.LightningModule):
 
         # the equivariance term is evaluated in the rotated frame: each rotated estimate is
         # both the source of one pairing's model input and the target of the other pairing.
-        # The gradient flows through the source into the first application of self(), but
-        # the target is detached: otherwise the model can zero this term by making all of
-        # its estimates empty, which the data-consistency term is too weak to prevent at
-        # low signal-to-noise ratio
+        # Both are detached, so the gradient of eq_loss only flows through the second
+        # application of self() below. With the gradient flowing into the target the model
+        # zeroes this term by making all of its estimates empty, and with it flowing into
+        # the source only, the estimates grow without bound where 'ctf' hides them from the
+        # data-consistency term
         rot_mats = self._sample_rotations(batch["index"], deterministic)
-        x_hat0_rot = self._rotate_batch(x_hat0, rot_mats)
-        x_hat1_rot = self._rotate_batch(x_hat1, rot_mats)
+        x_hat0_rot = self._rotate_batch(x_hat0.detach(), rot_mats)
+        x_hat1_rot = self._rotate_batch(x_hat1.detach(), rot_mats)
 
         generator = None
         if deterministic:
@@ -100,6 +101,11 @@ class LitUnet3D(pl.LightningModule):
         ctf_shuffled = ctf.roll(shift, dims=0)
 
         eq_loss = 0.0
+        # eq_loss relative to the variance of its target, averaged over both pairings: 1
+        # means the second application of self() does no better than a flat volume. Unlike
+        # eq_loss itself, this does not rise just because the estimates gain amplitude. Only
+        # logged, not part of 'loss'
+        rel_eq_loss = 0.0
         for x_hat_source_rot, x_hat_cross_rot in [
             (x_hat0_rot, x_hat1_rot),
             (x_hat1_rot, x_hat0_rot),
@@ -113,13 +119,18 @@ class LitUnet3D(pl.LightningModule):
             z = apply_fourier_mask_to_tomo(x_hat_source_rot, ctf_shuffled) + noise.roll(
                 shift, dims=0
             )
-            eq_loss = eq_loss + (self(z) - x_hat_cross_rot.detach()).square().mean()
+            squared_error = (self(z) - x_hat_cross_rot).square()
+            eq_loss = eq_loss + squared_error.mean()
+            target_var = x_hat_cross_rot.flatten(1).var(dim=1).clamp_min(1e-12)
+            rel_eq_loss = rel_eq_loss + (
+                squared_error.detach().flatten(1).mean(dim=1) / target_var
+            ).mean() / 2
 
         loss = dc_loss + self.lambda_ * eq_loss
-        return loss, dc_loss, eq_loss
+        return loss, dc_loss, eq_loss, rel_eq_loss
 
     def training_step(self, batch, batch_idx):
-        loss, dc_loss, eq_loss = self._step(batch, deterministic=False)
+        loss, dc_loss, eq_loss, rel_eq_loss = self._step(batch, deterministic=False)
         # sync_dist=True: under multi-GPU DDP each rank only sees its own shard, so without
         # this the ModelCheckpoint callbacks that monitor "fitting_loss"/"val_loss" (see
         # fit_model.py) would select checkpoints based on a single rank's partial view of
@@ -127,13 +138,15 @@ class LitUnet3D(pl.LightningModule):
         self.log("fitting_loss", loss, on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
         self.log("fitting_dc_loss", dc_loss, on_step=False, on_epoch=True, logger=True, sync_dist=True)
         self.log("fitting_eq_loss", eq_loss, on_step=False, on_epoch=True, logger=True, sync_dist=True)
+        self.log("fitting_rel_eq_loss", rel_eq_loss, on_step=False, on_epoch=True, logger=True, sync_dist=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
-        loss, dc_loss, eq_loss = self._step(batch, deterministic=True)
+        loss, dc_loss, eq_loss, rel_eq_loss = self._step(batch, deterministic=True)
         self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
         self.log("val_dc_loss", dc_loss, on_step=False, on_epoch=True, logger=True, sync_dist=True)
         self.log("val_eq_loss", eq_loss, on_step=False, on_epoch=True, logger=True, sync_dist=True)
+        self.log("val_rel_eq_loss", rel_eq_loss, on_step=False, on_epoch=True, logger=True, sync_dist=True)
 
     # def on_before_zero_grad(self, optimizer) -> None:
     #     self.ema.update()
