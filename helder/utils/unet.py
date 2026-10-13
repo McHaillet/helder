@@ -45,15 +45,17 @@ class LitUnet3D(pl.LightningModule):
         """
         return [sample_grid_rotation(int(index), deterministic) for index in indices]
 
-    def _rotate_batch(self, vol_batch, rot_mats):
+    def _rotate_batch(self, vol_batch, rot_mats, inverse=False):
         """
         Rotates each volume in 'vol_batch' by the corresponding matrix in 'rot_mats' (from
-        _sample_rotations). This is exact (no interpolation), so the output has exactly the
-        same shape as the input and needs no cropping.
+        _sample_rotations), or by its inverse if 'inverse' is True. This is exact (no
+        interpolation), so the output has exactly the same shape as the input and needs no
+        cropping.
         """
         rotated = []
         for vol, rot_mat in zip(vol_batch, rot_mats):
-            rotated.append(rotate_vol(vol, rot_mat))
+            # grid rotations are signed permutation matrices, so the transpose is the inverse
+            rotated.append(rotate_vol(vol, rot_mat.T if inverse else rot_mat))
         return torch.stack(rotated)
 
     def _step(self, batch, deterministic):
@@ -83,8 +85,6 @@ class LitUnet3D(pl.LightningModule):
         # detached, so the gradient of eq_loss only flows through the second application of
         # self() below
         rot_mats = self._sample_rotations(batch["index"], deterministic)
-        # grid rotations are signed permutation matrices, so the transpose is the inverse
-        inv_rot_mats = [rot_mat.T for rot_mat in rot_mats]
         x_hat0_rot = self._rotate_batch(x_hat0.detach(), rot_mats)
         x_hat1_rot = self._rotate_batch(x_hat1.detach(), rot_mats)
 
@@ -114,7 +114,7 @@ class LitUnet3D(pl.LightningModule):
             z = apply_fourier_mask_to_tomo(x_hat_source_rot, ctf_shuffled) + noise.roll(
                 shift, dims=0
             )
-            x_hat_z = self._rotate_batch(self(z), inv_rot_mats)
+            x_hat_z = self._rotate_batch(self(z), rot_mats, inverse=True)
             eq_loss = eq_loss + data_consistency_loss(x_hat_z, subtomo_cross, ctf)
 
         loss = dc_loss + self.lambda_ * eq_loss

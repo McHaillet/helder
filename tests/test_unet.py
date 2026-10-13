@@ -6,7 +6,7 @@ import pytest
 import torch
 
 from helder.utils.losses import data_consistency_loss
-from helder.utils.rotation import rotate_vol, sample_grid_rotation
+from helder.utils.rotation import GRID_ROTATIONS, rotate_vol, sample_grid_rotation
 from helder.utils.unet import LitUnet3D
 
 
@@ -17,6 +17,21 @@ def _make_lit_unet(**kwargs):
         subtomo_size=8,
         **kwargs,
     )
+
+
+def test_rotate_batch_inverse_undoes_rotation():
+    """
+    Rotating a batch and then rotating it back with 'inverse=True' must return the original
+    volumes exactly, for every grid rotation.
+    """
+    torch.manual_seed(0)
+    lit_unet = _make_lit_unet()
+    N = 8
+    vol_batch = torch.randn(len(GRID_ROTATIONS), N, N, N)
+    rotated = lit_unet._rotate_batch(vol_batch, GRID_ROTATIONS)
+    assert not torch.equal(rotated, vol_batch)
+    restored = lit_unet._rotate_batch(rotated, GRID_ROTATIONS, inverse=True)
+    assert torch.equal(restored, vol_batch)
 
 
 def test_step_combines_dc_and_eq_losses_weighted_by_lambda():
