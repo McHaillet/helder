@@ -18,7 +18,7 @@ def test_data_consistency_loss_zero_for_perfect_cross_reconstruction():
     x_hat = torch.randn(N, N, N)
     y = apply_fourier_mask_to_tomo(x_hat, ctf)
     loss = data_consistency_loss(x_hat, y, ctf)
-    assert loss.item() < 1e-10
+    assert loss.item() < 1e-6
 
 
 def test_data_consistency_loss_is_positive_otherwise():
@@ -59,11 +59,11 @@ def test_data_consistency_loss_ignores_zero_ctf_frequencies():
     assert torch.allclose(loss_a, loss_b, atol=1e-4)
 
 
-def test_data_consistency_loss_matches_manual_real_space_mse():
+def test_data_consistency_loss_matches_manual_real_space_l1():
     torch.manual_seed(0)
     N = 8
     ctf = torch.rand(N, N, N // 2 + 1).clamp(0, 1)
     x_hat = torch.randn(N, N, N)
     y = torch.randn(N, N, N)
-    expected = (apply_fourier_mask_to_tomo(x_hat, ctf) - y).square().mean()
+    expected = (apply_fourier_mask_to_tomo(x_hat, ctf) - y).abs().mean()
     assert torch.allclose(data_consistency_loss(x_hat, y, ctf), expected)

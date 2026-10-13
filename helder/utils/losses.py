@@ -5,7 +5,7 @@ from .fourier import apply_fourier_mask_to_tomo
 
 def data_consistency_loss(x_hat, y, ctf):
     """
-    Noise2Noise-style data-consistency loss, for one estimate/observation pair. 'x_hat' is
+    Noise2Noise-style L1 data-consistency loss, for one estimate/observation pair. 'x_hat' is
     the model's estimate from one of the two independent-noise raw observations; 'y' is the
     *other* one (which already carries the same physical 'ctf' baked in from acquisition/
     reconstruction - it is never re-applied to it). 'x_hat' is re-masked with the canonical
@@ -19,8 +19,9 @@ def data_consistency_loss(x_hat, y, ctf):
     target are ~0 there) - unlike the old two-region masked_loss, no extra region weighting
     is needed to handle this, which matters for a continuous (non-binary) CTF.
 
-    LitUnet3D._step uses this for its "dc_loss" only: the equivariance term ("eq_loss") is a
-    plain L2 loss between two estimates of the model, with no 'ctf' involved.
+    LitUnet3D._step uses this for both its "dc_loss" and its equivariance term ("eq_loss"),
+    where 'x_hat' is the estimate from a re-degraded estimate, rotated back to the native
+    orientation.
     """
     residual = apply_fourier_mask_to_tomo(x_hat, ctf) - y
-    return residual.square().mean()
+    return residual.abs().mean()

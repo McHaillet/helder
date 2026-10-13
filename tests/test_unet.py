@@ -5,6 +5,8 @@ Pure CPU/torch - no GPU needed (only fit_model's Trainer requires one).
 import pytest
 import torch
 
+from helder.utils.losses import data_consistency_loss
+from helder.utils.rotation import rotate_vol, sample_grid_rotation
 from helder.utils.unet import LitUnet3D
 
 
@@ -27,21 +29,16 @@ def test_step_combines_dc_and_eq_losses_weighted_by_lambda():
         "ctf": torch.rand(2, N, N, N // 2 + 1).clamp(0, 1),
         "index": [0, 1],
     }
-    loss, dc_loss, eq_loss, rel_eq_loss = lit_unet._step(batch, deterministic=True)
+    loss, dc_loss, eq_loss = lit_unet._step(batch, deterministic=True)
     assert torch.allclose(loss, dc_loss + 2.0 * eq_loss)
     for term in (loss, dc_loss, eq_loss):
         assert torch.isfinite(term)
     assert dc_loss.requires_grad and eq_loss.requires_grad
-    # only logged, so it must not carry a gradient
-    assert torch.isfinite(rel_eq_loss) and rel_eq_loss > 0
-    assert not rel_eq_loss.requires_grad
 
 
 def test_eq_loss_only_backpropagates_through_the_second_model_application():
     """
-    Both the source and the target of the equivariance term are detached: with the gradient
-    flowing into the target the model empties its estimates, and with it flowing into the
-    source only the estimates grow without bound.
+    The source of the equivariance term is detached and its target is a raw observation.
     """
     torch.manual_seed(0)
     lit_unet = _make_lit_unet()
@@ -60,12 +57,47 @@ def test_eq_loss_only_backpropagates_through_the_second_model_application():
         outputs.append(output)
 
     lit_unet.unet.register_forward_hook(capture)
-    _, _, eq_loss, _ = lit_unet._step(batch, deterministic=True)
+    _, _, eq_loss = lit_unet._step(batch, deterministic=True)
     eq_loss.backward()
     # the model is run on subtomo0, subtomo1 and then on the two re-degraded estimates
     assert not any(inp.requires_grad for inp in inputs)
     assert outputs[0].grad is None and outputs[1].grad is None
     assert outputs[2].grad is not None and outputs[3].grad is not None
+
+
+def test_eq_loss_compares_back_against_the_raw_cross_observation():
+    """
+    The estimate from each re-degraded estimate is rotated back to the native orientation
+    and compared against the raw observation its source did not come from, under the
+    original ctf.
+    """
+    torch.manual_seed(0)
+    lit_unet = _make_lit_unet().eval()
+    N = 8
+    batch = {
+        "subtomo0": torch.randn(2, N, N, N),
+        "subtomo1": torch.randn(2, N, N, N),
+        "ctf": torch.rand(2, N, N, N // 2 + 1).clamp(0, 1),
+        "index": [0, 1],
+    }
+    outputs = []
+    lit_unet.unet.register_forward_hook(
+        lambda module, args, output: outputs.append(output.squeeze(1))
+    )
+    with torch.no_grad():
+        _, _, eq_loss = lit_unet._step(batch, deterministic=True)
+    inv_rot_mats = [sample_grid_rotation(index, True).T for index in batch["index"]]
+    expected = 0.0
+    # the model is run on subtomo0, subtomo1 and then on the two re-degraded estimates
+    for x_hat_z_rot, subtomo_cross in [
+        (outputs[2], batch["subtomo1"]),
+        (outputs[3], batch["subtomo0"]),
+    ]:
+        x_hat_z = torch.stack(
+            [rotate_vol(vol, rot_mat) for vol, rot_mat in zip(x_hat_z_rot, inv_rot_mats)]
+        )
+        expected = expected + data_consistency_loss(x_hat_z, subtomo_cross, batch["ctf"])
+    assert torch.allclose(eq_loss, expected)
 
 
 def test_step_raises_on_batch_of_one():
