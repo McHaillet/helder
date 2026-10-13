@@ -110,10 +110,10 @@ class LitUnet3D(pl.LightningModule):
             # observation (a separate realization per pairing). The noise is added after
             # rotating and re-masking, and is not rotated itself: it belongs to the
             # acquisition geometry, like 'ctf'
-            noise = synthesize_noise(subtomo0, subtomo1, generator=generator)
-            z = apply_fourier_mask_to_tomo(x_hat_source_rot, ctf_shuffled) + noise.roll(
+            noise_shuffled = synthesize_noise(subtomo0, subtomo1, generator=generator).roll(
                 shift, dims=0
             )
+            z = apply_fourier_mask_to_tomo(x_hat_source_rot, ctf_shuffled) + noise_shuffled
             x_hat_z = self._rotate_batch(self(z), rot_mats, inverse=True)
             eq_loss = eq_loss + data_consistency_loss(x_hat_z, subtomo_cross, ctf)
 
