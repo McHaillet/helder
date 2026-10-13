@@ -36,6 +36,36 @@ def test_apply_fourier_mask_all_zeros_gives_zero():
     assert torch.allclose(result, torch.zeros_like(result), atol=1e-6)
 
 
+def test_apply_double_size_fourier_mask_all_ones_is_identity():
+    torch.manual_seed(0)
+    for N in [8, 12, 32]:
+        vol = torch.randn(N, N, N)
+        mask = torch.ones(2 * N, 2 * N, N + 1)
+        result = apply_fourier_mask_to_tomo(vol, mask, double_size=True)
+        assert result.shape == vol.shape
+        assert torch.allclose(vol, result, atol=1e-4), N
+
+
+def test_apply_double_size_fourier_mask_all_zeros_gives_zero():
+    torch.manual_seed(0)
+    N = 16
+    vol = torch.randn(N, N, N)
+    mask = torch.zeros(2 * N, 2 * N, N + 1)
+    result = apply_fourier_mask_to_tomo(vol, mask, double_size=True)
+    assert torch.allclose(result, torch.zeros_like(result), atol=1e-6)
+
+
+def test_apply_double_size_fourier_mask_handles_batches_per_volume():
+    torch.manual_seed(0)
+    N = 8
+    vol = torch.randn(3, N, N, N)
+    mask = torch.rand(3, 2 * N, 2 * N, N + 1)
+    result = apply_fourier_mask_to_tomo(vol, mask, double_size=True)
+    for i in range(3):
+        expected = apply_fourier_mask_to_tomo(vol[i], mask[i], double_size=True)
+        assert torch.allclose(result[i], expected, atol=1e-6)
+
+
 def test_fft_3d_puts_dc_at_center_for_constant_input():
     N = 8
     vol = torch.ones(N, N, N)

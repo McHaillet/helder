@@ -20,12 +20,14 @@ class LitUnet3D(pl.LightningModule):
         adam_params,
         subtomo_size,
         lambda_=1.0,
+        double_size_ctf=False,
     ):
         super().__init__()
         self.unet_params = unet_params
         self.adam_params = adam_params
         self.subtomo_size = subtomo_size
         self.lambda_ = lambda_
+        self.double_size_ctf = double_size_ctf
         self.unet = Unet3D(**self.unet_params)
         # self.ema = ExponentialMovingAverage(self.unet.parameters(), decay=0.995)
         self.save_hyperparameters()
@@ -75,9 +77,9 @@ class LitUnet3D(pl.LightningModule):
         # model can never lower either by reproducing the noise of its own input
         x_hat0 = self(subtomo0)
         x_hat1 = self(subtomo1)
-        dc_loss = data_consistency_loss(x_hat0, subtomo1, ctf) + data_consistency_loss(
-            x_hat1, subtomo0, ctf
-        )
+        dc_loss = data_consistency_loss(
+            x_hat0, subtomo1, ctf, self.double_size_ctf
+        ) + data_consistency_loss(x_hat1, subtomo0, ctf, self.double_size_ctf)
 
         # the equivariance term re-degrades each rotated estimate into a new model input,
         # and compares the model's estimate from that, rotated back, against the raw cross
@@ -113,9 +115,16 @@ class LitUnet3D(pl.LightningModule):
             noise_shuffled = synthesize_noise(subtomo0, subtomo1, generator=generator).roll(
                 shift, dims=0
             )
-            z = apply_fourier_mask_to_tomo(x_hat_source_rot, ctf_shuffled) + noise_shuffled
+            z = (
+                apply_fourier_mask_to_tomo(
+                    x_hat_source_rot, ctf_shuffled, double_size=self.double_size_ctf
+                )
+                + noise_shuffled
+            )
             x_hat_z = self._rotate_batch(self(z), rot_mats, inverse=True)
-            eq_loss = eq_loss + data_consistency_loss(x_hat_z, subtomo_cross, ctf)
+            eq_loss = eq_loss + data_consistency_loss(
+                x_hat_z, subtomo_cross, ctf, self.double_size_ctf
+            )
 
         loss = dc_loss + self.lambda_ * eq_loss
         return loss, dc_loss, eq_loss

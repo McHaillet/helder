@@ -77,6 +77,12 @@ def fit_model(
             help="Weight of the equivariance loss term relative to the data-consistency loss term: total loss = data_consistency_loss + lambda * equivariance_loss."
         ),
     ] = 1.0,
+    double_size_ctf: Annotated[
+        bool,
+        typer.Option(
+            help="Set this if the CTFs in subtomo_dir were reconstructed at twice the sub-tomogram size, i.e. with shape (2N, 2N, N+1) for sub-tomograms of shape (N, N, N). Each volume is then padded to twice its size before the CTF is applied, which costs more memory and time."
+        ),
+    ] = False,
     gradient_clip_val: Annotated[
         float,
         typer.Option(
@@ -266,6 +272,7 @@ def fit_model(
         adam_params=adam_params_dict,
         subtomo_size=subtomo_size,
         lambda_=lambda_,
+        double_size_ctf=double_size_ctf,
     )
     if init_from_checkpoint is not None:
         checkpoint = torch.load(init_from_checkpoint, map_location="cpu")

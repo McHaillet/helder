@@ -67,3 +67,13 @@ def test_data_consistency_loss_matches_manual_real_space_l1():
     y = torch.randn(N, N, N)
     expected = (apply_fourier_mask_to_tomo(x_hat, ctf) - y).abs().mean()
     assert torch.allclose(data_consistency_loss(x_hat, y, ctf), expected)
+
+
+def test_data_consistency_loss_with_double_size_ctf_matches_manual_real_space_l1():
+    torch.manual_seed(0)
+    N = 8
+    ctf = torch.rand(2 * N, 2 * N, N + 1).clamp(0, 1)
+    x_hat = torch.randn(N, N, N)
+    y = torch.randn(N, N, N)
+    expected = (apply_fourier_mask_to_tomo(x_hat, ctf, double_size=True) - y).abs().mean()
+    assert torch.allclose(data_consistency_loss(x_hat, y, ctf, double_size_ctf=True), expected)

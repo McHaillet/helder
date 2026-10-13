@@ -3,7 +3,7 @@ import torch
 from .fourier import apply_fourier_mask_to_tomo
 
 
-def data_consistency_loss(x_hat, y, ctf):
+def data_consistency_loss(x_hat, y, ctf, double_size_ctf=False):
     """
     Noise2Noise-style L1 data-consistency loss, for one estimate/observation pair. 'x_hat' is
     the model's estimate from one of the two independent-noise raw observations; 'y' is the
@@ -22,6 +22,9 @@ def data_consistency_loss(x_hat, y, ctf):
     LitUnet3D._step uses this for both its "dc_loss" and its equivariance term ("eq_loss"),
     where 'x_hat' is the estimate from a re-degraded estimate, rotated back to the native
     orientation.
+
+    'double_size_ctf' must be True if 'ctf' is given at twice the size of 'x_hat' (see
+    apply_fourier_mask_to_tomo).
     """
-    residual = apply_fourier_mask_to_tomo(x_hat, ctf) - y
+    residual = apply_fourier_mask_to_tomo(x_hat, ctf, double_size=double_size_ctf) - y
     return residual.abs().mean()

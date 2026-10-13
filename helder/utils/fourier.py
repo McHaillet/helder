@@ -1,5 +1,8 @@
+import functools
+
 import torch
 from torch import fft
+from torch_grid_utils.shapes_3d import cuboid
 
 
 def fft_3d(tomo, norm="ortho"):
@@ -10,7 +13,28 @@ def fft_3d(tomo, norm="ortho"):
     return fft.fftshift(fft.fftn(tomo, dim=fft_dim, norm=norm), dim=fft_dim)
 
 
-def apply_fourier_mask_to_tomo(tomo, mask, norm="ortho"):
+@functools.lru_cache(maxsize=None)
+def _padded_taper(size, device):
+    """
+    Soft mask for a (size, size, size) volume that was padded to twice its size: 1 on the
+    volume itself, with a cosine falloff to 0 over the padding. Cached, since cuboid()
+    computes the soft edge with a distance transform on the cpu.
+    """
+    # cuboid() excludes voxels exactly on its boundary, which for an even 'size' is the
+    # first voxel of the volume along each axis, so make it one voxel larger to include it
+    dimensions = (size + 1, size + 1, size + 1)
+    # the first call may come from validation, which lightning runs in inference mode, and
+    # a tensor created there could not be reused for model fitting afterwards
+    with torch.inference_mode(False):
+        return cuboid(
+            dimensions=dimensions,
+            image_shape=2 * size,
+            smoothing_radius=size // 2,
+            device=device,
+        )
+
+
+def apply_fourier_mask_to_tomo(tomo, mask, norm="ortho", double_size=False):
     """
     Multiplies the rfftn of 'tomo' with the real-valued CTF/mask 'mask' (rfftn convention:
     shape (..., N, N, N//2+1), unshifted, DC at index [..., 0, 0, 0]) and inverse-transforms
@@ -19,10 +43,35 @@ def apply_fourier_mask_to_tomo(tomo, mask, norm="ortho"):
     array first) is both cheaper and simpler: 'mask' is never rotated in this codebase (only
     real-space volumes are), so there is no need for the fftshifted, DC-centered layout that
     rotation would require.
+
+    If 'double_size' is True, 'mask' is instead sampled twice as finely in Fourier space as
+    the transform of 'tomo' itself: for a 'tomo' of shape (..., N, N, N) it is in rfftn
+    convention for a (2N, 2N, 2N) volume, i.e. shape (..., 2N, 2N, N+1). 'tomo' is then
+    reflect-padded by N/2 on every side to (2N, 2N, 2N) and tapered to 0 over the padding
+    (see _padded_taper) before 'mask' is applied, and the result is cropped back to
+    (N, N, N). The finer sampling corresponds to a real-space kernel of twice the extent,
+    and the padding gives that kernel room to spread signal beyond the box, rather than
+    wrapping it around to the opposite side.
     """
     fft_dim = (-3, -2, -1)
-    tomo_ft_masked = fft.rfftn(tomo, dim=fft_dim, norm=norm) * mask
-    return fft.irfftn(tomo_ft_masked, s=tomo.shape[-3:], dim=fft_dim, norm=norm)
+    if not double_size:
+        tomo_ft_masked = fft.rfftn(tomo, dim=fft_dim, norm=norm) * mask
+        return fft.irfftn(tomo_ft_masked, s=tomo.shape[-3:], dim=fft_dim, norm=norm)
+
+    size = tomo.shape[-1]
+    pad = size // 2
+    padded_shape = (2 * size,) * 3
+    # reflect-pad by hand: the backward pass of torch's 3D reflection padding has no
+    # deterministic cuda implementation, which fit_model's deterministic Trainer requires
+    padded = tomo
+    for dim in fft_dim:
+        before = padded.narrow(dim, 1, pad).flip(dim)
+        after = padded.narrow(dim, size - pad - 1, pad).flip(dim)
+        padded = torch.cat([before, padded, after], dim=dim)
+    padded = padded * _padded_taper(size, tomo.device)
+    padded_ft_masked = fft.rfftn(padded, dim=fft_dim, norm=norm) * mask
+    padded_masked = fft.irfftn(padded_ft_masked, s=padded_shape, dim=fft_dim, norm=norm)
+    return padded_masked[..., pad:-pad, pad:-pad, pad:-pad]
 
 
 def synthesize_noise(subtomo0, subtomo1, generator=None):

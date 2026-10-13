@@ -51,6 +51,22 @@ def test_step_combines_dc_and_eq_losses_weighted_by_lambda():
     assert dc_loss.requires_grad and eq_loss.requires_grad
 
 
+def test_step_with_double_size_ctf():
+    torch.manual_seed(0)
+    lit_unet = _make_lit_unet(double_size_ctf=True)
+    N = 8
+    batch = {
+        "subtomo0": torch.randn(2, N, N, N),
+        "subtomo1": torch.randn(2, N, N, N),
+        "ctf": torch.rand(2, 2 * N, 2 * N, N + 1).clamp(0, 1),
+        "index": [0, 1],
+    }
+    loss, dc_loss, eq_loss = lit_unet._step(batch, deterministic=True)
+    for term in (loss, dc_loss, eq_loss):
+        assert torch.isfinite(term)
+    assert dc_loss.requires_grad and eq_loss.requires_grad
+
+
 def test_eq_loss_only_backpropagates_through_the_second_model_application():
     """
     The source of the equivariance term is detached and its target is a raw observation.

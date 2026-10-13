@@ -35,12 +35,13 @@ class SubtomoDataset(Dataset):
     acquisition geometry, not on which half of the frames was used. The DC bin ([0,0,0]) is
     forced to 1 on load, overriding its (small) physical value - see __getitem__.
 
-    'ctf/{index}.pt' must be given at the same 'subtomo_size' as subtomo0/subtomo1: a CTF,
+    'ctf/{index}.pt' must be given at the same 'subtomo_size' as subtomo0/subtomo1, or at
+    twice that size (at the same pixel size) when fitting with 'double_size_ctf': a CTF,
     unlike a binary missing-wedge mask, has genuine radial/magnitude frequency dependence and
     can't be correctly resized in Fourier space, so it must be independently, correctly
-    reconstructed at that resolution. Each tensor must be real-valued, in rfftn convention:
-    shape (N, N, N//2+1), DC at index [0,0,0] (unshifted) - matching what
-    apply_fourier_mask_to_tomo expects. Unlike a real-space volume, this mask is never
+    reconstructed at that size. Each tensor must be real-valued, in rfftn convention: shape
+    (N, N, N//2+1), or (2N, 2N, N+1) at twice the size, DC at index [0,0,0] (unshifted) -
+    matching what apply_fourier_mask_to_tomo expects. Unlike a real-space volume, this mask is never
     rotated anywhere in this codebase, so there is no need to convert it to a full,
     fftshifted (N, N, N) array (see apply_fourier_mask_to_tomo).
     """

@@ -54,6 +54,12 @@ def test_fit_model_completes(make_subtomo_dir, tmp_path):
 
 
 @requires_gpu
+def test_fit_model_completes_with_double_size_ctf(make_subtomo_dir, tmp_path):
+    root = make_subtomo_dir(native_size=24, crop_size=24, n_fitting=6, n_val=2, double_size_ctf=True)
+    fit_model(**_fit_kwargs(root, tmp_path / "logs", crop_size=24), double_size_ctf=True)
+
+
+@requires_gpu
 def test_fit_model_raises_on_indivisible_native_size(make_subtomo_dir, tmp_path):
     # native/on-disk size (30) not divisible by 2**num_downsample_layers (8): the model is
     # run on native-size subtomos every step, so this must raise rather than silently pad
