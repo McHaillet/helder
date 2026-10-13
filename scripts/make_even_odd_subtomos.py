@@ -16,17 +16,18 @@ For every tile, its 3D center in Angstrom is computed from the tile's start
 voxel and the tomogram's pixel size (read from the .mrc header), and a 3D-CTF
 (identical for even and odd, since CTF does not depend on which half of the
 frames was used) is reconstructed at that position at `--box-size` with
-warpylib.
+warpylib, or at twice `--box-size` (same pixel size) with `--double-size-ctf`,
+for fitting with `helder fit-model --double-size-ctf`.
 
 Per tomogram, tiles are randomly split into a fitting and a validation set
 (`--val-fraction`, default 0.2). Output layout:
 
     <subtomo-dir>/fitting_subtomos/subtomo0/{0,1,...}.pt    (even, box-size)
     <subtomo-dir>/fitting_subtomos/subtomo1/{0,1,...}.pt    (odd, box-size)
-    <subtomo-dir>/fitting_subtomos/ctf/{0,1,...}.pt         (box-size)
+    <subtomo-dir>/fitting_subtomos/ctf/{0,1,...}.pt         (box-size, or twice that)
     <subtomo-dir>/val_subtomos/subtomo0/{0,1,...}.pt        (even, box-size)
     <subtomo-dir>/val_subtomos/subtomo1/{0,1,...}.pt        (odd, box-size)
-    <subtomo-dir>/val_subtomos/ctf/{0,1,...}.pt             (box-size)
+    <subtomo-dir>/val_subtomos/ctf/{0,1,...}.pt             (box-size, or twice that)
 
 CTF reconstruction runs on `--device` (default "cpu"); pass e.g. "cuda" or
 "cuda:0" to reconstruct on GPU. Saved .pt files are always moved back to CPU
@@ -91,6 +92,7 @@ def main() -> None:
     parser.add_argument("xml_dir", type=Path, help="Directory containing the tilt series .xml files")
     parser.add_argument("--subtomo-dir", type=Path, required=True, help="Where to save the subtomograms and CTFs")
     parser.add_argument("--box-size", type=int, required=True, help="Subtomogram + CTF box size in pixels (must be even)")
+    parser.add_argument("--double-size-ctf", action="store_true", help="Reconstruct the CTFs at twice --box-size (same pixel size), for fitting with 'helder fit-model --double-size-ctf'")
     parser.add_argument("--stride", type=int, default=None, help="Stride in pixels of the sliding window used for tiling, same along all 3 axes (default: --box-size, i.e. no overlap)")
     parser.add_argument("--val-fraction", type=float, default=0.2, help="Fraction of each tomogram's tiles assigned to the validation set (default: 0.2)")
     parser.add_argument("--seed", type=int, default=0, help="Random seed for the fitting/validation split (default: 0)")
@@ -102,6 +104,7 @@ def main() -> None:
     if args.box_size % 2 != 0:
         raise SystemExit("--box-size must be even")
     strides = None if args.stride is None else 3 * [args.stride]
+    ctf_size = 2 * args.box_size if args.double_size_ctf else args.box_size
 
     # Match every even tomogram to its odd tomogram (same file name) and its
     # tilt series .xml (same name minus the trailing "_<pixel size>Apx").
@@ -150,7 +153,7 @@ def main() -> None:
         # as warpylib's own reconstruct_full does.
         ts.volume_dimensions_physical = torch.tensor(even_tomo.shape, dtype=torch.float32, device=device).flip(0) * pixel_size
         ctf_vols = batched_reconstruct(
-            lambda p: ts.reconstruct_subvolume_ctfs_single(p, pixel_size=pixel_size, size=args.box_size, oversampling=1.0, apply_ctf=True),
+            lambda p: ts.reconstruct_subvolume_ctfs_single(p, pixel_size=pixel_size, size=ctf_size, oversampling=1.0, apply_ctf=True),
             positions.to(device), args.batch_size,
         )
 
