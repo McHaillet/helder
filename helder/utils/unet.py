@@ -60,7 +60,7 @@ class LitUnet3D(pl.LightningModule):
             rotated.append(rotate_vol(vol, rot_mat.T if inverse else rot_mat))
         return torch.stack(rotated)
 
-    def _step(self, batch, deterministic):
+    def _step(self, batch, batch_idx, deterministic):
         subtomo0 = batch["subtomo0"]
         subtomo1 = batch["subtomo1"]
         ctf = batch["ctf"]
@@ -72,65 +72,57 @@ class LitUnet3D(pl.LightningModule):
                 f"per batch, got {batch_size}."
             )
 
-        # both terms are cross-wise and summed over both pairings: an estimate that derives
-        # from one observation is always compared against the other observation, so that the
-        # model can never lower either by reproducing the noise of its own input
-        x_hat0 = self(subtomo0)
-        x_hat1 = self(subtomo1)
-        dc_loss = data_consistency_loss(
-            x_hat0, subtomo1, ctf, self.double_size_ctf
-        ) + data_consistency_loss(x_hat1, subtomo0, ctf, self.double_size_ctf)
+        # alternate which of the two observations the model is fitted on ("source"); the
+        # other one ("cross") is the target of both loss terms, so that the model can never
+        # lower either by reproducing the noise of its own input
+        use_branch0_as_source = (
+            (batch_idx % 2 == 0) if deterministic else (random.random() < 0.5)
+        )
+        y_source = subtomo0 if use_branch0_as_source else subtomo1
+        y_cross = subtomo1 if use_branch0_as_source else subtomo0
+        x_hat_source = self(y_source)
+        dc_loss = data_consistency_loss(x_hat_source, y_cross, ctf, self.double_size_ctf)
 
-        # the equivariance term re-degrades each rotated estimate into a new model input,
+        # the equivariance term re-degrades the rotated estimate into a new model input,
         # and compares the model's estimate from that, rotated back, against the raw cross
-        # observation under the original 'ctf' (like dc_loss). The rotated estimates are
+        # observation under the original 'ctf' (like dc_loss). The rotated estimate is
         # detached, so the gradient of eq_loss only flows through the second application of
         # self() below
         rot_mats = self._sample_rotations(batch["index"], deterministic)
-        x_hat0_rot = self._rotate_batch(x_hat0.detach(), rot_mats)
-        x_hat1_rot = self._rotate_batch(x_hat1.detach(), rot_mats)
+        x_hat_source_rot = self._rotate_batch(x_hat_source.detach(), rot_mats)
 
         generator = None
         if deterministic:
             generator = torch.Generator(device=subtomo0.device).manual_seed(
                 int(batch["index"][0])
             )
-        # degrade each estimate with the ctf and the noise of another example in the batch,
+        # degrade the estimate with the ctf and the noise of another example in the batch,
         # kept together as a pair, so that the model sees more ctfs than the rotations of its
         # own. Rolling by a non-zero shift (rather than a random permutation) guarantees
-        # that no example keeps its own pair
+        # that no example keeps its own pair.
+        # The re-masked estimate is noise-free, unlike the raw observations the model sees
+        # in its first application, so add synthetic noise to make it a new noisy
+        # observation. The noise is added after rotating and re-masking, and is not rotated
+        # itself: it belongs to the acquisition geometry, like 'ctf'
         shift = 1 if deterministic else random.randrange(1, batch_size)
         ctf_shuffled = ctf.roll(shift, dims=0)
-
-        eq_loss = 0.0
-        for x_hat_source_rot, subtomo_cross in [
-            (x_hat0_rot, subtomo1),
-            (x_hat1_rot, subtomo0),
-        ]:
-            # the re-masked estimate is noise-free, unlike the raw observations the model
-            # sees in its first application, so add synthetic noise to make it a new noisy
-            # observation (a separate realization per pairing). The noise is added after
-            # rotating and re-masking, and is not rotated itself: it belongs to the
-            # acquisition geometry, like 'ctf'
-            noise_shuffled = synthesize_noise(subtomo0, subtomo1, generator=generator).roll(
-                shift, dims=0
+        noise_shuffled = synthesize_noise(subtomo0, subtomo1, generator=generator).roll(
+            shift, dims=0
+        )
+        z = (
+            apply_fourier_mask_to_tomo(
+                x_hat_source_rot, ctf_shuffled, double_size=self.double_size_ctf
             )
-            z = (
-                apply_fourier_mask_to_tomo(
-                    x_hat_source_rot, ctf_shuffled, double_size=self.double_size_ctf
-                )
-                + noise_shuffled
-            )
-            x_hat_z = self._rotate_batch(self(z), rot_mats, inverse=True)
-            eq_loss = eq_loss + data_consistency_loss(
-                x_hat_z, subtomo_cross, ctf, self.double_size_ctf
-            )
+            + noise_shuffled
+        )
+        x_hat_z = self._rotate_batch(self(z), rot_mats, inverse=True)
+        eq_loss = data_consistency_loss(x_hat_z, y_cross, ctf, self.double_size_ctf)
 
         loss = dc_loss + self.lambda_ * eq_loss
         return loss, dc_loss, eq_loss
 
     def training_step(self, batch, batch_idx):
-        loss, dc_loss, eq_loss = self._step(batch, deterministic=False)
+        loss, dc_loss, eq_loss = self._step(batch, batch_idx, deterministic=False)
         # sync_dist=True: under multi-GPU DDP each rank only sees its own shard, so without
         # this the ModelCheckpoint callbacks that monitor "fitting_loss"/"val_loss" (see
         # fit_model.py) would select checkpoints based on a single rank's partial view of
@@ -141,7 +133,7 @@ class LitUnet3D(pl.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        loss, dc_loss, eq_loss = self._step(batch, deterministic=True)
+        loss, dc_loss, eq_loss = self._step(batch, batch_idx, deterministic=True)
         self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
         self.log("val_dc_loss", dc_loss, on_step=False, on_epoch=True, logger=True, sync_dist=True)
         self.log("val_eq_loss", eq_loss, on_step=False, on_epoch=True, logger=True, sync_dist=True)
