@@ -21,6 +21,7 @@ class LitUnet3D(pl.LightningModule):
         subtomo_size,
         lambda_=1.0,
         double_size_ctf=False,
+        add_synthetic_noise=True,
     ):
         super().__init__()
         self.unet_params = unet_params
@@ -28,6 +29,7 @@ class LitUnet3D(pl.LightningModule):
         self.subtomo_size = subtomo_size
         self.lambda_ = lambda_
         self.double_size_ctf = double_size_ctf
+        self.add_synthetic_noise = add_synthetic_noise
         self.unet = Unet3D(**self.unet_params)
         # self.ema = ExponentialMovingAverage(self.unet.parameters(), decay=0.995)
         self.save_hyperparameters()
@@ -103,18 +105,18 @@ class LitUnet3D(pl.LightningModule):
         # The re-masked estimate is noise-free, unlike the raw observations the model sees
         # in its first application, so add synthetic noise to make it a new noisy
         # observation. The noise is added after rotating and re-masking, and is not rotated
-        # itself: it belongs to the acquisition geometry, like 'ctf'
+        # itself: it belongs to the acquisition geometry, like 'ctf'. With
+        # 'add_synthetic_noise' False (e.g. for already denoised observations), no noise is
+        # added and the model input is only the re-masked estimate
         shift = 1 if deterministic else random.randrange(1, batch_size)
         ctf_shuffled = ctf.roll(shift, dims=0)
-        noise_shuffled = synthesize_noise(subtomo0, subtomo1, generator=generator).roll(
-            shift, dims=0
+        z = apply_fourier_mask_to_tomo(
+            x_hat_source_rot, ctf_shuffled, double_size=self.double_size_ctf
         )
-        z = (
-            apply_fourier_mask_to_tomo(
-                x_hat_source_rot, ctf_shuffled, double_size=self.double_size_ctf
+        if self.add_synthetic_noise:
+            z = z + synthesize_noise(subtomo0, subtomo1, generator=generator).roll(
+                shift, dims=0
             )
-            + noise_shuffled
-        )
         x_hat_z = self._rotate_batch(self(z), rot_mats, inverse=True)
         eq_loss = data_consistency_loss(x_hat_z, y_cross, ctf, self.double_size_ctf)
 

@@ -83,6 +83,12 @@ def fit_model(
             help="Set this if the CTFs in subtomo_dir were reconstructed at twice the sub-tomogram size, i.e. with shape (2N, 2N, N+1) for sub-tomograms of shape (N, N, N). Each volume is then padded to twice its size before the CTF is applied, which costs more memory and time."
         ),
     ] = False,
+    add_synthetic_noise: Annotated[
+        bool,
+        typer.Option(
+            help="Add synthetic noise (shuffled across the batch along with the ctf) to the re-degraded estimate that is fed back into the model for the equivariance loss. Turn off with --no-add-synthetic-noise when the sub-tomograms were already denoised, e.g. with scripts/n2n_denoise.py."
+        ),
+    ] = True,
     gradient_clip_val: Annotated[
         float,
         typer.Option(
@@ -273,6 +279,7 @@ def fit_model(
         subtomo_size=subtomo_size,
         lambda_=lambda_,
         double_size_ctf=double_size_ctf,
+        add_synthetic_noise=add_synthetic_noise,
     )
     if init_from_checkpoint is not None:
         checkpoint = torch.load(init_from_checkpoint, map_location="cpu")

@@ -2,7 +2,10 @@
 Pull fitted Helder checkpoints from the cluster (if not already present locally),
 run each on both halves (subtomo0/subtomo1) of the local subtomograms, average the two
 outputs, and show every averaged subtomogram as a layer in a napari viewer, next to
-the average of the two raw halves.
+the average of the two raw halves. The plain Noise2Noise model fitted by
+scripts/n2n_denoise.py is pulled too: each half is denoised with it first ('n2n' shows
+the average), and the Helder checkpoints are run on the denoised halves, matching
+fitting on a subtomo directory written by n2n_denoise.py.
 
 Also shown, to check the model input of the equivariance term during fitting (see
 LitUnet3D._step): the prediction for subtomo0 with the 3D-CTF re-applied and synthetic
@@ -21,12 +24,14 @@ import torch
 
 from helder.fit_model import LitUnet3D
 from helder.utils.fourier import apply_fourier_mask_to_tomo, synthesize_noise
+from helder.utils.unet import Unet3D
 
-VERSION = "version_49"
-REMOTE_CHECKPOINT_DIR = f"mchaillet@hpc04.tudelft.net:/home/mchaillet/data/match_pick_data/warp_tiltseries/logs/{VERSION}/checkpoints/val_loss"
+VERSION = "version_50"
+REMOTE_CHECKPOINT_DIR = f"mchaillet@hpc04.tudelft.net:/home/mchaillet/data/match_pick_data/warp_tiltseries/logs/{VERSION}/checkpoints/fitting_loss"
 CHECKPOINTS = [
-    "epoch=39-val_loss=17.97027.ckpt",
+    "epoch=3-fitting_loss=0.91626.ckpt",
 ]
+REMOTE_N2N_MODEL = "mchaillet@hpc04.tudelft.net:/home/mchaillet/data/match_pick_data/warp_tiltseries/subtomos_n2n/n2n_model.pt"
 SUBTOMO_DIR = Path("/home/marten/data/delft/ddw")
 
 
@@ -42,9 +47,20 @@ def load_models(device) -> dict:
     return models
 
 
+def load_n2n_model(device) -> Unet3D:
+    local_model = SUBTOMO_DIR / "n2n_model.pt"
+    if not local_model.exists():
+        subprocess.run(["scp", REMOTE_N2N_MODEL, str(local_model)], check=True)
+    checkpoint = torch.load(local_model, map_location=device)
+    model = Unet3D(**checkpoint["unet_params"]).to(device)
+    model.load_state_dict(checkpoint["state_dict"])
+    return model.eval()
+
+
 def refine_subtomos() -> dict:
     device = "cuda" if torch.cuda.is_available() else "cpu"
     models = load_models(device)
+    n2n_model = load_n2n_model(device)
     size = next(iter(models.values())).subtomo_size
 
     layers = {}
@@ -61,10 +77,12 @@ def refine_subtomos() -> dict:
                 continue
             ctf = torch.load(SUBTOMO_DIR / "ctf" / file0.name).to(device)
             ctf[0, 0, 0] = 1.0  # as in SubtomoDataset.__getitem__
-            batch = torch.stack([subtomo0, subtomo1]).to(device)
+            raw = torch.stack([subtomo0, subtomo1]).to(device)
+            batch = n2n_model(raw.unsqueeze(1)).squeeze(1)
             noise = synthesize_noise(batch[0], batch[1])
             layers[file0.stem] = {
-                "raw": batch.mean(dim=0),
+                "raw": raw.mean(dim=0),
+                "n2n": batch.mean(dim=0),
                 # "half0": batch[0],
             }
             for epoch, model in models.items():

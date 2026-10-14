@@ -5,6 +5,7 @@ Pure CPU/torch - no GPU needed (only fit_model's Trainer requires one).
 import pytest
 import torch
 
+from helder.utils.fourier import apply_fourier_mask_to_tomo
 from helder.utils.losses import data_consistency_loss
 from helder.utils.rotation import GRID_ROTATIONS, rotate_vol, sample_grid_rotation
 from helder.utils.unet import LitUnet3D
@@ -65,6 +66,31 @@ def test_step_with_double_size_ctf():
     for term in (loss, dc_loss, eq_loss):
         assert torch.isfinite(term)
     assert dc_loss.requires_grad and eq_loss.requires_grad
+
+
+def test_step_without_synthetic_noise_feeds_the_noise_free_re_masked_estimate():
+    """
+    With add_synthetic_noise=False, the model's second input must be exactly the rotated,
+    re-masked estimate (ctf of the next example after roll(1) in deterministic mode).
+    """
+    torch.manual_seed(0)
+    lit_unet = _make_lit_unet(add_synthetic_noise=False)
+    N = 8
+    batch = {
+        "subtomo0": torch.randn(2, N, N, N),
+        "subtomo1": torch.randn(2, N, N, N),
+        "ctf": torch.rand(2, N, N, N // 2 + 1).clamp(0, 1),
+        "index": [0, 1],
+    }
+    inputs = []
+    lit_unet.unet.register_forward_hook(lambda module, args, output: inputs.append(args[0].squeeze(1)))
+    loss, dc_loss, eq_loss = lit_unet._step(batch, batch_idx=0, deterministic=True)
+    assert torch.isfinite(loss) and eq_loss.requires_grad
+
+    rot_mats = lit_unet._sample_rotations(batch["index"], deterministic=True)
+    x_hat_rot = lit_unet._rotate_batch(lit_unet(batch["subtomo0"]).detach(), rot_mats)
+    expected_z = apply_fourier_mask_to_tomo(x_hat_rot, batch["ctf"].roll(1, dims=0))
+    assert torch.allclose(inputs[1], expected_z, atol=1e-5)
 
 
 def test_eq_loss_only_backpropagates_through_the_second_model_application():
