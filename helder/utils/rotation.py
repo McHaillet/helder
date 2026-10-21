@@ -1,4 +1,5 @@
 import itertools
+import math
 import random
 
 import torch
@@ -114,3 +115,68 @@ def rotate_vol(vol, rot_mat):
     if flip_dims:
         vol = vol.flip(dims=flip_dims)
     return vol.permute(*range(lead), *(lead + p for p in inv_perm))
+
+
+def _shear(vol, shear, along, by):
+    """
+    Shears the (B, n0, n1, n2) volumes 'vol' along dim 'along' (1, 2 or 3) in proportion to
+    the coordinate along dim 'by': each line along 'along' is shifted by
+    shear[b] * (coordinate - center), where 'shear' is (B,) and the center is that of the
+    voxel grid. The shift is a phase ramp on a 1D rfft along 'along', which is exact (sinc
+    interpolation) for band-limited content, but wraps around the box. For an even size the
+    Nyquist bin can't hold a fractional shift (irfft drops its imaginary part), so content
+    at Nyquist is slightly damped.
+    """
+    n_along, n_by = vol.shape[along], vol.shape[by]
+    freqs = torch.fft.rfftfreq(n_along, device=vol.device)  # cycles / voxel
+    coords = torch.arange(n_by, device=vol.device, dtype=vol.dtype) - (n_by - 1) / 2
+    angles = -2 * math.pi * shear[:, None, None] * coords[None, :, None] * freqs  # (B, n_by, K)
+    # place the n_by and K axes of the phase ramp at dims 'by' and 'along' of 'vol'
+    shape = [len(vol), 1, 1, 1]
+    shape[by], shape[along] = n_by, len(freqs)
+    phase = torch.polar(torch.ones_like(angles), angles)
+    if by > along:
+        phase = phase.transpose(1, 2)
+    ft = torch.fft.rfft(vol, dim=along) * phase.reshape(shape)
+    return torch.fft.irfft(ft, n=n_along, dim=along)
+
+
+def rotate_about_tilt_axis(vol, theta, tilt_axis=TILT_AXIS):
+    """
+    Rotates the last 3 dims of 'vol' about 'tilt_axis' by any angle 'theta' (in radians, a
+    tensor of shape vol.shape[:-3], one angle per volume). A positive quarter turn equals the
+    grid rotation [[0, 0, -1], [0, 1, 0], [1, 0, 0]] for the default 'tilt_axis' (via
+    rotate_vol).
+
+    Each angle is split into the nearest multiple of 90 degrees, applied exactly with
+    torch.rot90, and a remainder of at most 45 degrees, applied as three shears (Paeth's
+    decomposition), each an exact Fourier phase shift (see _shear). Unlike trilinear
+    interpolation this keeps all frequency amplitudes, up to Nyquist, but the shears wrap
+    content around the box: only the central region of the output is valid, so pad the
+    volume (e.g. extract it at ~sqrt(2) times the size needed) and crop after rotating.
+    Differentiable.
+    """
+    lead_shape = vol.shape[:-3]
+    vol = vol.reshape(-1, *vol.shape[-3:])
+    theta = theta.reshape(-1).to(device=vol.device, dtype=vol.dtype)
+    # dims (of the batched 4D volume) of the rotation plane, in the order that matches the
+    # grid rotation documented above
+    plane_0, plane_1 = (1 + d for d in range(3) if d != tilt_axis)
+
+    quarter_turns = torch.round(theta / (math.pi / 2))
+    rest = theta - quarter_turns * (math.pi / 2)
+    a, b = -torch.tan(rest / 2), torch.sin(rest)
+    vol = _shear(vol, a, along=plane_1, by=plane_0)
+    vol = _shear(vol, b, along=plane_0, by=plane_1)
+    vol = _shear(vol, a, along=plane_1, by=plane_0)
+
+    # torch.rot90 takes a python int, so rotate the volumes with the same number of quarter
+    # turns together
+    rotated = []
+    order = []
+    for k in quarter_turns.unique().tolist():
+        idx = (quarter_turns == k).nonzero().squeeze(1)
+        rotated.append(torch.rot90(vol[idx], int(k) % 4, dims=(plane_1, plane_0)))
+        order.append(idx)
+    vol = torch.cat(rotated)[torch.argsort(torch.cat(order))]
+    return vol.reshape(*lead_shape, *vol.shape[-3:])

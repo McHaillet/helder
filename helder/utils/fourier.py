@@ -74,6 +74,35 @@ def apply_fourier_mask_to_tomo(tomo, mask, norm="ortho", double_size=False):
     return padded_masked[..., pad:-pad, pad:-pad, pad:-pad]
 
 
+def upsample_ctf(ctf, size):
+    """
+    Resamples the CTF/mask 'ctf' (rfftn convention, for a (N, N, N) volume) on the finer
+    Fourier grid of a (size, size, size) volume, size > N, e.g. to get the twice finer
+    sampling that apply_fourier_mask_to_tomo's 'double_size' needs from a CTF reconstructed
+    at the box size. This zero-pads its point-spread function in real space, which is
+    sinc interpolation: the values at the original sample points are kept exactly. The
+    result is only as good as the PSF that 'ctf' holds: N samples can only represent a
+    PSF of extent N, so tails beyond that are folded back into it rather than recovered.
+    The sinc interpolation of sharp edges (e.g. of the missing wedge) ripples slightly, so
+    the result is clamped to [0, 1], and the DC bin set to 1 as in SubtomoDataset.
+    """
+    n, dims = ctf.shape[-2], (-3, -2, -1)
+    psf = fft.fftshift(fft.irfftn(ctf, s=(n,) * 3, dim=dims), dim=dims)  # lag 0 at index n//2
+    if n % 2 == 0:
+        # the Nyquist plane belongs to both +n/2 and -n/2: split it over both ends, so that
+        # the PSF is symmetric about lag 0 once it doesn't wrap around anymore
+        for dim in dims:
+            psf = torch.cat([psf, psf.narrow(dim, 0, 1)], dim=dim)
+            psf.narrow(dim, 0, 1).mul_(0.5)
+            psf.narrow(dim, -1, 1).mul_(0.5)
+    before = size // 2 - n // 2  # lag 0 at index size//2, where ifftshift expects it
+    after = size - psf.shape[-1] - before
+    padded = torch.nn.functional.pad(psf, (before, after) * 3)
+    resampled = fft.rfftn(fft.ifftshift(padded, dim=dims), dim=dims).real.clamp(0, 1)
+    resampled[..., 0, 0, 0] = 1.0
+    return resampled
+
+
 def synthesize_noise(subtomo0, subtomo1, generator=None):
     """
     Synthesizes a new noise realization from a pair of independent-noise observations of the

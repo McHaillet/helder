@@ -1,9 +1,12 @@
 """
 Tests for helder.utils.rotation: the 20 grid-aligned rotations (get_grid_rotations,
-sample_grid_rotation) and their exact, interpolation-free application (rotate_vol).
+sample_grid_rotation) and their exact, interpolation-free application (rotate_vol), and
+rotation about the tilt axis by any angle (rotate_about_tilt_axis).
 """
 import itertools
+import math
 
+import pytest
 import torch
 
 from helder.utils.rotation import (
@@ -11,6 +14,7 @@ from helder.utils.rotation import (
     WEDGE_PRESERVING_FLIPS,
     get_grid_rotations,
     get_wedge_preserving_flips,
+    rotate_about_tilt_axis,
     rotate_vol,
     sample_grid_rotation,
     sample_wedge_preserving_flip,
@@ -194,3 +198,81 @@ def test_sample_wedge_preserving_flip_returns_one_of_the_3():
     for index in range(10):
         mat = sample_wedge_preserving_flip(index, deterministic=True)
         assert tuple(mat.flatten().tolist()) in flip_set
+
+
+QUARTER_TURN = torch.tensor([[0, 0, -1], [0, 1, 0], [1, 0, 0]])
+
+
+def _band_limited_blob(batch=1, size=32, seed=0):
+    """
+    Smooth random volumes confined to a central sphere, so that rotating them by shears is
+    accurate (band-limited) and nothing wraps around the box.
+    """
+    generator = torch.Generator().manual_seed(seed)
+    noise = torch.randn(batch, size, size, size, generator=generator)
+    coords = torch.arange(size) - (size - 1) / 2
+    radius = (coords[:, None, None] ** 2 + coords[None, :, None] ** 2 + coords[None, None, :] ** 2).sqrt()
+    sphere = torch.clamp((size / 4 - radius) / 2, 0, 1)
+    # low-pass after masking, so that the result has (next to) nothing at Nyquist, which a
+    # fractional shift can't represent exactly for an even size
+    freqs = torch.fft.fftfreq(size)
+    radius_ft = (freqs[:, None, None] ** 2 + freqs[None, :, None] ** 2 + freqs[None, None, :] ** 2).sqrt()
+    lowpass = torch.exp(-((radius_ft / 0.12) ** 2))
+    return torch.fft.ifftn(torch.fft.fftn(noise * sphere, dim=(-3, -2, -1)) * lowpass, dim=(-3, -2, -1)).real
+
+
+def _rel_err(a, b):
+    return ((a - b).norm() / b.norm()).item()
+
+
+@pytest.mark.parametrize("quarter_turns", [-2, -1, 0, 1, 2, 3, 4])
+def test_rotate_about_tilt_axis_quarter_turns_match_grid_rotations(quarter_turns):
+    vol = torch.randn(1, 12, 12, 12)
+    rotated = rotate_about_tilt_axis(vol, torch.tensor([quarter_turns * math.pi / 2]))
+    expected = vol[0]
+    for _ in range(quarter_turns % 4):
+        expected = rotate_vol(expected, QUARTER_TURN)
+    assert torch.allclose(rotated[0], expected, atol=1e-5)
+
+
+@pytest.mark.parametrize("deg_1, deg_2", [(30, 60), (45, 45), (170, 10), (-170, -10), (100, 80), (225, -45), (-100, 10)])
+def test_rotate_about_tilt_axis_composes_to_exact_quarter_turns(deg_1, deg_2):
+    # covers remainders on both sides of the nearest quarter turn, and angles beyond 180
+    vol = _band_limited_blob()
+    twice = rotate_about_tilt_axis(
+        rotate_about_tilt_axis(vol, torch.tensor([math.radians(deg_1)])),
+        torch.tensor([math.radians(deg_2)]),
+    )
+    expected = rotate_about_tilt_axis(vol, torch.tensor([math.radians(deg_1 + deg_2)]))
+    assert _rel_err(twice, expected) < 1e-3
+
+
+@pytest.mark.parametrize("deg", [10, 37, 45, 135, 170, -60])
+def test_rotate_about_tilt_axis_round_trips(deg):
+    vol = _band_limited_blob()
+    theta = torch.tensor([math.radians(deg)])
+    assert _rel_err(rotate_about_tilt_axis(rotate_about_tilt_axis(vol, theta), -theta), vol) < 1e-4
+
+
+def test_rotate_about_tilt_axis_handles_mixed_angles_and_leading_dims():
+    vol = _band_limited_blob(batch=6).reshape(2, 3, 32, 32, 32)
+    theta = torch.tensor([[170.0, -100.0, 30.0], [260.0, -45.0, 90.0]]).deg2rad()
+    rotated = rotate_about_tilt_axis(vol, theta)
+    assert rotated.shape == vol.shape
+    for i in range(2):
+        for j in range(3):
+            single = rotate_about_tilt_axis(vol[i, j][None], theta[i, j][None])[0]
+            assert torch.allclose(rotated[i, j], single, atol=1e-6)
+
+
+def test_rotate_about_tilt_axis_keeps_the_tilt_axis_fixed():
+    # a volume that only varies along the tilt axis (Y) is unchanged by any rotation about it
+    vol = torch.sin(torch.arange(16.0) / 3)[None, None, :, None].expand(1, 16, 16, 16)
+    rotated = rotate_about_tilt_axis(vol, torch.tensor([math.radians(33)]))
+    assert torch.allclose(rotated, vol, atol=1e-4)
+
+
+def test_rotate_about_tilt_axis_is_differentiable():
+    vol = _band_limited_blob().requires_grad_()
+    rotate_about_tilt_axis(vol, torch.tensor([0.3])).sum().backward()
+    assert vol.grad is not None and torch.isfinite(vol.grad).all()

@@ -3,9 +3,10 @@ Tests for helder.utils.fourier: apply_fourier_mask_to_tomo (rfftn-based CTF/mask
 fft_3d (the fftshifted full transform, used only for visualization) and synthesize_noise
 (phase-randomized noise from a pair of observations).
 """
+import pytest
 import torch
 
-from helder.utils.fourier import apply_fourier_mask_to_tomo, fft_3d, synthesize_noise
+from helder.utils.fourier import apply_fourier_mask_to_tomo, fft_3d, synthesize_noise, upsample_ctf
 
 
 def test_apply_fourier_mask_matches_direct_rfftn_masking():
@@ -121,3 +122,28 @@ def test_synthesize_noise_is_reproducible_with_generator():
     y0, y1 = _noisy_pair(8)
     draws = [synthesize_noise(y0, y1, generator=torch.Generator().manual_seed(3)) for _ in range(2)]
     assert torch.equal(draws[0], draws[1])
+
+
+def _gaussian_ctf(n, sigma):
+    """A smooth rfftn-layout mask whose PSF (a Gaussian of width 1 / (2 pi sigma)) fits in the box."""
+    kz = torch.fft.fftfreq(n)[:, None, None]
+    ky = torch.fft.fftfreq(n)[None, :, None]
+    kx = torch.fft.rfftfreq(n)[None, None, :]
+    return torch.exp(-(kz**2 + ky**2 + kx**2) / (2 * sigma**2))
+
+
+@pytest.mark.parametrize("n, size", [(16, 32), (16, 24), (15, 30)])
+def test_upsample_ctf_matches_the_mask_sampled_on_the_finer_grid(n, size):
+    # a PSF that fits in the box is represented exactly, so sinc interpolation recovers the
+    # mask everywhere on the finer grid
+    upsampled = upsample_ctf(_gaussian_ctf(n, sigma=0.1), size)
+    assert upsampled.shape == (size, size, size // 2 + 1)
+    torch.testing.assert_close(upsampled, _gaussian_ctf(size, sigma=0.1), atol=1e-5, rtol=0)
+
+
+def test_upsample_ctf_keeps_the_original_samples():
+    torch.manual_seed(0)
+    ctf = torch.fft.rfftn(torch.rand(16, 16, 16)).abs()  # an arbitrary, non-smooth mask
+    ctf = ctf / ctf.max()
+    ctf[0, 0, 0] = 1.0
+    torch.testing.assert_close(upsample_ctf(ctf, 32)[::2, ::2, ::2], ctf, atol=1e-5, rtol=0)

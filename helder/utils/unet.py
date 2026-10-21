@@ -153,6 +153,19 @@ class LitUnet3D(pl.LightningModule):
     #         scheduler.step()
 
 
+def set_padding_mode(module, padding_mode):
+    """
+    Sets 'padding_mode' (e.g. "reflect" instead of the default "zeros") on every padded
+    convolution in 'module'. nn.Conv3d reads it on each forward, so this is equivalent to
+    passing it at construction, and doesn't change the parameters (checkpoints stay
+    compatible). Zero padding shows the network an artificial dark border at the faces of
+    the box, which it then learns edge-specific behavior for.
+    """
+    for m in module.modules():
+        if isinstance(m, torch.nn.Conv3d) and any(p > 0 for p in m.padding):
+            m.padding_mode = padding_mode
+
+
 class Unet3D(torch.nn.Module):
     """
     PyTorch implementation of a 3D U-Net, which was inspired by the one used in the IsoNet software package (https://github.com/IsoNet-cryoET/IsoNet/tree/master/models/unet)
@@ -166,6 +179,7 @@ class Unet3D(torch.nn.Module):
         num_downsample_layers: int = 3,
         drop_prob: float = 0.0,
         residual: bool = True,
+        padding_mode: str = "zeros",
     ):
         super().__init__()
 
@@ -176,6 +190,7 @@ class Unet3D(torch.nn.Module):
         self.drop_prob = drop_prob
         self.residual = residual
         self.__init_layers__()
+        set_padding_mode(self, padding_mode)
 
     def __init_layers__(self):
         self.down_blocks = nn.ModuleList(
